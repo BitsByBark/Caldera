@@ -36,50 +36,117 @@ function parseValue(raw) {
   return v;
 }
 
-export function parseBrk(text) {
-  const stripped = text
+function stripComments(text) {
+  return text
     .split('\n')
-    .map((line) => line.replace(/\/\/.*$/, '').trimEnd())
+    .map((line) => line.replace(/\/\/.*$/, ''))
     .join('\n');
+}
 
-  const groupRe = /([a-z0-9_]+)\s+"([^"]+)"\s*\{([\s\S]*?)\}/g;
-  const entryRe = /([a-z0-9_]+)\s*\{([\s\S]*?)\}/g;
+function skipWhitespace(source, idx) {
+  let i = idx;
+  while (i < source.length && /\s/.test(source[i])) i += 1;
+  return i;
+}
+
+function readQuoted(source, idx) {
+  let i = skipWhitespace(source, idx);
+  if (source[i] !== '"') throw new Error(`Expected quoted string at index ${i}`);
+  i += 1;
+  const start = i;
+  while (i < source.length && source[i] !== '"') i += 1;
+  if (i >= source.length) throw new Error('Unterminated quoted string');
+  return { value: source.slice(start, i), next: i + 1 };
+}
+
+function readIdentifier(source, idx) {
+  let i = skipWhitespace(source, idx);
+  const start = i;
+  while (i < source.length && /[a-z0-9_]/i.test(source[i])) i += 1;
+  if (i === start) throw new Error(`Expected identifier at index ${i}`);
+  return { value: source.slice(start, i), next: i };
+}
+
+function extractBlock(source, openBraceIdx) {
+  let depth = 0;
+  let i = openBraceIdx;
+  for (; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return { content: source.slice(openBraceIdx + 1, i), next: i + 1 };
+      }
+    }
+  }
+  throw new Error('Unterminated block');
+}
+
+function parseFields(entryBody, entryId) {
   const fieldRe = /^\s*([a-z0-9_]+)\s*=\s*(.+)$/gm;
+  const fields = {};
+  let fieldMatch;
 
-  const groups = [];
-  let groupMatch;
-  while ((groupMatch = groupRe.exec(stripped)) !== null) {
-    const groupId = groupMatch[1];
-    const groupLabel = groupMatch[2];
-    const groupBody = groupMatch[3];
+  while ((fieldMatch = fieldRe.exec(entryBody)) !== null) {
+    fields[fieldMatch[1]] = fieldMatch[2].trim();
+  }
 
-    const entries = [];
-    let entryMatch;
-    while ((entryMatch = entryRe.exec(groupBody)) !== null) {
-      const entryId = entryMatch[1];
-      const entryBody = entryMatch[2];
-      const fields = {};
-      let fieldMatch;
-      while ((fieldMatch = fieldRe.exec(entryBody)) !== null) {
-        fields[fieldMatch[1]] = fieldMatch[2].trim();
-      }
+  const required = ['label', 'type', 'default', 'hot'];
+  for (const req of required) {
+    if (!(req in fields)) throw new Error(`Missing required field "${req}" in entry ${entryId}`);
+  }
 
-      const required = ['label', 'type', 'default', 'hot'];
-      for (const req of required) {
-        if (!(req in fields)) throw new Error(`Missing required field \"${req}\" in entry ${entryId}`);
-      }
+  return {
+    id: entryId,
+    label: parseValue(fields.label),
+    type: parseType(fields.type),
+    default: parseValue(fields.default),
+    hot: parseValue(fields.hot),
+    desc: fields.desc ? parseValue(fields.desc) : null,
+  };
+}
 
-      entries.push({
-        id: entryId,
-        label: parseValue(fields.label),
-        type: parseType(fields.type),
-        default: parseValue(fields.default),
-        hot: parseValue(fields.hot),
-        desc: fields.desc ? parseValue(fields.desc) : null,
-      });
+function parseEntries(groupBody) {
+  const entries = [];
+  let idx = 0;
+
+  while (idx < groupBody.length) {
+    idx = skipWhitespace(groupBody, idx);
+    if (idx >= groupBody.length) break;
+
+    const { value: entryId, next: afterId } = readIdentifier(groupBody, idx);
+    let cursor = skipWhitespace(groupBody, afterId);
+    if (groupBody[cursor] !== '{') {
+      throw new Error(`Expected "{" after entry ${entryId}`);
     }
 
-    groups.push({ id: groupId, label: groupLabel, entries });
+    const { content: entryBody, next } = extractBlock(groupBody, cursor);
+    entries.push(parseFields(entryBody, entryId));
+    idx = next;
+  }
+
+  return entries;
+}
+
+export function parseBrk(text) {
+  const source = stripComments(text);
+  const groups = [];
+  let idx = 0;
+
+  while (idx < source.length) {
+    idx = skipWhitespace(source, idx);
+    if (idx >= source.length) break;
+
+    const { value: groupId, next: afterGroupId } = readIdentifier(source, idx);
+    const { value: groupLabel, next: afterLabel } = readQuoted(source, afterGroupId);
+    const cursor = skipWhitespace(source, afterLabel);
+    if (source[cursor] !== '{') {
+      throw new Error(`Expected "{" after group ${groupId}`);
+    }
+
+    const { content: groupBody, next } = extractBlock(source, cursor);
+    groups.push({ id: groupId, label: groupLabel, entries: parseEntries(groupBody) });
+    idx = next;
   }
 
   return { groups };
