@@ -1,11 +1,24 @@
 <script>
+  import { open } from '@tauri-apps/plugin-dialog';
+
   export let value = '';
   export let onChange = () => {};
+
+  async function chooseDirectory() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+    });
+
+    if (typeof selected === 'string' && selected.length > 0) {
+      onChange(selected);
+    }
+  }
 </script>
 
 <div class="input-shell">
   <input class="input-text" value={value} on:input={(e) => onChange(e.target.value)} />
-  <button type="button" class="dots">...</button>
+  <button type="button" class="dots" on:click={chooseDirectory}>...</button>
 </div>
 
 <style>

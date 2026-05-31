@@ -23,6 +23,7 @@ fn save_game_config(game_id: String, config: GameConfig) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_steam_games,
             get_game_artwork,
