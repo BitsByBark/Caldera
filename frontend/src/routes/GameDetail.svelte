@@ -4,7 +4,7 @@
   import { get } from 'svelte/store';
   import TopBar from '../components/TopBar.svelte';
   import Button from '../components/Button.svelte';
-  import Cycle from '../components/Cycle.svelte';
+  import Dropdown from '../components/Dropdown.svelte';
   import { gameList } from '../stores/game.js';
   import { settings } from '../stores/settings.js';
   import { sessionLog, addLog } from '../stores/log.js';
@@ -29,8 +29,8 @@
   let logViewport;
 
   $: game = $gameList.find((g) => g.app_id === params.id) || null;
-  $: profileOptions = gameConfig.profiles?.length ? gameConfig.profiles : ['^ CREATE PROFILE'];
-  $: activeProfileValue = gameConfig.profiles?.length ? (gameConfig.active_profile || gameConfig.profiles[0]) : '^ CREATE PROFILE';
+  $: profileOptions = [...(gameConfig.profiles || []), '^ CREATE PROFILE'];
+  $: activeProfileValue = gameConfig.active_profile || profileOptions[0] || '^ CREATE PROFILE';
   $: deployerValue = gameConfig.deployer || '^ SELECT DEPLOYER';
   $: lastLog = $sessionLog.length ? $sessionLog[$sessionLog.length - 1] : { time: '--:--', message: 'No log entries yet', type: 'default' };
 
@@ -102,8 +102,8 @@
 <section class="page">
   <TopBar backRoute="/" />
 
-  <main class="content">
-    <section class="hero">
+  <main class="content game-detail">
+    <section class="hero hero-section">
       {#if artwork.hero}
         <img class="hero-image" src={artwork.hero} alt={game?.name || gameConfig.name || params.id} />
       {:else}
@@ -128,30 +128,35 @@
         {editMode ? '// DONE' : '// EDIT'}
       </button>
 
-      <div class="divider"></div>
-
-      <div class="selector">
-        <span class="selector-label">PROFILE :</span>
-        <div class="selector-input">
-          <Cycle options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
+      <div class="selectors-right">
+        <div class="selector">
+          <span class="selector-label">PROFILE :</span>
+          <div class="selector-input">
+            <Dropdown options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
+          </div>
         </div>
-      </div>
 
-      <div class="divider"></div>
+        <div class="divider"></div>
 
-      <div class="selector">
-        <span class="selector-label">DEPLOYER =</span>
-        <div class="selector-input">
-          <Cycle options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
+        <div class="selector">
+          <span class="selector-label">DEPLOYER =</span>
+          <div class="selector-input">
+            <Dropdown options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
+          </div>
         </div>
       </div>
     </section>
-  </main>
 
-  <section class={`log-panel ${logExpanded ? 'expanded' : 'collapsed'}`}>
+    <section class={`log-panel ${logExpanded ? 'expanded' : 'collapsed'}`}>
     <div class="log-head">
-      <div class="preview"><span class="time">{lastLog.time}</span><span class="pipe"> | </span>{lastLog.message}</div>
-      <button class="toggle" on:click={() => (logExpanded = !logExpanded)}>{logExpanded ? '^' : 'v'}</button>
+      <div class="preview">
+        {#each $sessionLog.slice(-3) as entry}
+          <div class={`line ${entry.type || 'default'}`}>
+            <span class="time">{entry.time}</span><span class="pipe"> | </span><span>{entry.message}</span>
+          </div>
+        {/each}
+      </div>
+      <button class="toggle" on:click={() => (logExpanded = !logExpanded)}>{logExpanded ? 'v' : '^'}</button>
     </div>
 
     {#if logExpanded}
@@ -164,6 +169,7 @@
       </div>
     {/if}
   </section>
+  </main>
 </section>
 
 <style>
@@ -178,7 +184,14 @@
 
   .content {
     padding-top: 56px;
-    padding-bottom: 36px;
+    height: 100vh;
+    box-sizing: border-box;
+  }
+
+  .game-detail {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
   }
 
   .hero {
@@ -188,6 +201,12 @@
     border-bottom: var(--border-subtle);
     overflow: hidden;
     background: var(--bg-surface);
+  }
+
+  .hero-section {
+    flex: 1;
+    min-height: 120px;
+    overflow: hidden;
   }
 
   .hero-image {
@@ -240,6 +259,7 @@
     display: flex;
     align-items: center;
     gap: 24px;
+    flex-shrink: 0;
     box-sizing: border-box;
   }
 
@@ -275,6 +295,13 @@
     gap: 10px;
   }
 
+  .selectors-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
   .selector-label {
     color: var(--text-muted);
   }
@@ -284,17 +311,14 @@
   }
 
   .log-panel {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
     background: var(--bg-surface);
     border-top: var(--border-subtle);
-    z-index: 25;
+    flex-shrink: 0;
+    height: calc(3 * 1.6em + 16px);
   }
 
   .log-panel.expanded {
-    height: 180px;
+    height: 60vh;
     border: var(--border-subtle);
     background: var(--bg);
   }
@@ -314,11 +338,9 @@
   }
 
   .preview {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     flex: 1;
     min-width: 0;
+    overflow: hidden;
   }
 
   .toggle {
@@ -332,7 +354,7 @@
   }
 
   .log-body {
-    height: calc(180px - 36px);
+    height: calc(60vh - 36px);
     overflow-y: auto;
     padding: 8px 12px;
     box-sizing: border-box;
