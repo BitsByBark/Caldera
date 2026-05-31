@@ -1,0 +1,20 @@
+:root {
+  --bg: #0D1014;
+  --dark-red: #7A1F1F;
+  --red: #E63636;
+  --coral: #EE9C9C;
+  --dark-teal: #0E5F66;
+  --cyan: #13B5B7;
+  --aqua: #94E0E0;
+  --white: #FCFCFC;
+  --error: #F64646;
+  --warning: #EB8D47;
+  --caution: #EBC547;
+  --success: #84E052;
+  --info: #4CB2F6;
+
+  --font: "Courier New", Courier, monospace;
+  --border: 1px solid var(--white);
+  --border-cyan: 1px solid var(--cyan);
+  --border-red: 1px solid var(--red);
+}

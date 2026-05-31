@@ -1,0 +1,46 @@
+/* CALDERA — REBELLION THEME */
+
+:root {
+    --bg:                    #1A1614;
+    --bg-surface:            #221E1B;
+    --bg-hover:              #2A2520;
+
+    --text:                  #F0EDE6;
+    --text-muted:            #9A938C;
+    --text-disabled:         #4A4440;
+
+    --interactive:           #E8B84B;
+
+    --action:                #C0392B;
+    --action-active:         #A93226;
+
+    --ash:                   #4A4440;
+
+    --border:                1px solid var(--interactive);
+    --border-action:         1px solid var(--action);
+    --border-subtle:         1px solid var(--ash);
+    --border-rule:           1px solid var(--ash);
+
+    --btn-primary-bg:        var(--interactive);
+    --btn-primary-text:      #1A1614;
+    --btn-destructive-bg:    var(--action);
+    --btn-destructive-text:  #F0EDE6;
+
+    --toggle-off:            var(--ash);
+    --toggle-on:             var(--action);
+
+    --slider-track:          var(--interactive);
+    --slider-thumb:          var(--ash);
+    --slider-tick:           var(--text-muted);
+    --slider-label:          var(--text-muted);
+
+    --success:               #6B9E3F;
+    --warning:               #C96A2A;
+    --error:                 var(--action);
+    --info:                  #4A7FA5;
+
+    --border-radius:         2px;
+    --font:                  "Courier New", Courier, monospace;
+    --ui-scale:              1;
+    --text-scale:            1;
+}

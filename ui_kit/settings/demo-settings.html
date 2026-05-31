@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CALDERA Settings Demo</title>
+    <link rel="stylesheet" href="../base/tokens.css" />
+    <link rel="stylesheet" href="../base/reset.css" />
+    <link rel="stylesheet" href="../inputs/inputs.css" />
+    <link rel="stylesheet" href="../lists/lists.css" />
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <main class="page">
+      <div class="section-title">{ SETTINGS }</div>
+      <div id="settings-root"></div>
+    </main>
+
+    <script type="module">
+      import { loadSettingsPage } from './settings.js';
+      await loadSettingsPage({ brkPath: './demo-settings.brk', mountSelector: '#settings-root' });
+    </script>
+  </body>
+</html>

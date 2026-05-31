@@ -1,0 +1,12 @@
+# Build output
+backend/target/
+frontend/dist/
+
+# Dependencies
+frontend/node_modules/
+
+# IDE
+.idea/
+
+# OS noise
+.DS_Store

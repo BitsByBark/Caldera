@@ -1,0 +1,36 @@
+.btn {
+  font-family: var(--font);
+  text-transform: uppercase;
+  border-radius: 0;
+  border: var(--border);
+  padding: 8px 10px;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+
+.btn:hover { opacity: 0.85; }
+.btn:active { opacity: 0.7; }
+
+.btn-inline {
+  display: inline-block;
+  width: auto;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--white);
+  border: var(--border);
+}
+
+.btn-primary {
+  background: var(--cyan);
+  color: var(--bg);
+  border: 1px solid transparent;
+}
+
+.btn-destructive {
+  background: var(--red);
+  color: var(--white);
+  border: 1px solid transparent;
+}

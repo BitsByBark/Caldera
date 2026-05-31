@@ -1,0 +1,55 @@
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-title {
+  color: var(--aqua);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tabs-h,
+.tabs-v {
+  display: flex;
+  gap: 6px;
+}
+
+.tabs-v {
+  flex-direction: column;
+  max-width: 240px;
+}
+
+.tab {
+  padding: 4px 6px;
+  border: 1px solid transparent;
+}
+
+.tab.active {
+  border: var(--border);
+}
+
+.panel {
+  border: var(--border);
+  padding: 10px;
+}

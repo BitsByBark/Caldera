@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CALDERA UI Kit Demo</title>
+    <link rel="stylesheet" href="./base/tokens.css" />
+    <link rel="stylesheet" href="./base/reset.css" />
+    <link rel="stylesheet" href="./buttons/buttons.css" />
+    <link rel="stylesheet" href="./inputs/inputs.css" />
+    <link rel="stylesheet" href="./lists/lists.css" />
+    <link rel="stylesheet" href="./popups/popups.css" />
+    <link rel="stylesheet" href="./settings/settings.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="section">
+        <div class="section-title">{ BUTTONS }</div>
+        <div class="stack">
+          <button class="btn btn-secondary">SECONDARY</button>
+          <button class="btn btn-primary">PRIMARY</button>
+          <button class="btn btn-destructive">DESTRUCTIVE</button>
+          <div class="row">
+            <button class="btn btn-primary btn-inline">+ DEPLOY</button>
+            <button class="btn btn-destructive btn-inline">- DELETE</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">{ INPUTS }</div>
+        <div class="stack">
+          <div class="input-shell"><input class="input-text" placeholder='"display name"' value="operator" /></div>
+          <div class="input-shell">
+            <input class="input-path-field" placeholder='"~/CALDERA/mods"' value="~/CALDERA/mods" />
+            <button class="input-path-btn">...</button>
+          </div>
+          <div class="dropdown" data-dropdown>
+            <div class="input-shell dropdown-button" data-dropdown-button><span>v</span><span data-dropdown-label>"Skyrim SE"</span><span>v</span></div>
+            <ul class="dropdown-list">
+              <li class="dropdown-item" data-dropdown-item>Skyrim SE</li>
+              <li class="dropdown-item" data-dropdown-item>Fallout 4</li>
+              <li class="dropdown-item" data-dropdown-item>Cyberpunk 2077</li>
+            </ul>
+          </div>
+          <div class="input-shell cycle" data-cycle data-options="name,date,size,status" data-value="date">
+            <button class="cycle-arrow" data-cycle-prev><</button>
+            <span data-cycle-label></span>
+            <button class="cycle-arrow" data-cycle-next>></button>
+          </div>
+          <div class="input-shell range-wrap" data-range>
+            <input type="range" min="1" max="16" step="1" value="4" />
+            <span class="range-value" data-range-value>4</span>
+          </div>
+          <div class="toggle" data-toggle><div class="toggle-pill"></div></div>
+          <div class="input-shell color-input" data-color-input>
+            <div class="color-swatch" data-color-swatch style="background: #E63636;"></div>
+            <div data-color-value>#E63636</div>
+            <input type="color" value="#e63636" hidden />
+          </div>
+          <div class="input-shell keybind-capture" tabindex="0" data-keybind><span data-keybind-value>Ctrl+Shift+T</span></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">{ TABS }</div>
+        <div class="tabs-h">
+          <div class="tab active">&gt;&gt; "GAMES"</div>
+          <div class="tab">"MODS"</div>
+          <div class="tab">"DOWNLOADS"</div>
+        </div>
+        <div class="tabs-v">
+          <div class="tab active">&gt;&gt; "GENERAL"</div>
+          <div class="tab">"PROFILES"</div>
+          <div class="tab">"KEYBINDS"</div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">{ LIST ELEMENTS }</div>
+        <div class="stack">
+          <div class="list-item"><div class="list-main"><div class="list-left">"Base List Item"</div><div class="list-right">"Right Slot"</div><div class="list-expand"></div></div></div>
+
+          <div class="list-item" data-expandable>
+            <div class="list-main"><div class="list-left">"Settings Entry"</div><div class="list-right"><div class="input-shell"><input class="input-text" value="operator" /></div></div><div class="list-expand" data-expand-trigger><span data-expand-icon>v</span></div></div>
+            <div class="list-details settings-desc" data-expand-content>This setting applies instantly without restart.</div>
+          </div>
+
+          <div class="list-item" data-expandable>
+            <div class="list-main"><div class="list-left">"Unofficial Patch"</div><div class="list-right"><button class="btn btn-primary btn-inline">+ DEPLOY</button><button class="btn btn-destructive btn-inline">- DELETE</button></div><div class="list-expand" data-expand-trigger><span data-expand-icon>v</span></div></div>
+            <div class="list-details" data-expand-content>
+              <div class="kv"><div>description:</div><div>Core fixes for Skyrim Special Edition</div><div>version:</div><div>1.4.2</div><div>size:</div><div>128MB</div><div>source:</div><div>Nexus</div></div>
+            </div>
+          </div>
+
+          <div class="list-item" data-expandable>
+            <div class="list-main"><div class="list-left">"Performance Profile"</div><div class="list-right"><div class="toggle on" data-toggle><div class="toggle-pill"></div></div></div><div class="list-expand" data-expand-trigger><span data-expand-icon>v</span></div></div>
+            <div class="list-details" data-expand-content>
+              <div class="profile-mods">
+                <div class="list-item"><div class="list-main"><div class="list-left">"SSE Engine Fixes"</div><div class="list-right"><div class="toggle on" data-toggle><div class="toggle-pill"></div></div></div><div class="list-expand"></div></div></div>
+                <div class="list-item"><div class="list-main"><div class="list-left">"Unofficial Patch"</div><div class="list-right"><div class="toggle" data-toggle><div class="toggle-pill"></div></div></div><div class="list-expand"></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">{ POPUPS }</div>
+        <div class="row">
+          <button id="open-modal" class="btn btn-secondary btn-inline">OPEN MODAL</button>
+          <button data-toast="info" class="btn btn-secondary btn-inline">INFO TOAST</button>
+          <button data-toast="success" class="btn btn-secondary btn-inline">SUCCESS TOAST</button>
+          <button data-toast="warning" class="btn btn-secondary btn-inline">WARNING TOAST</button>
+          <button data-toast="error" class="btn btn-secondary btn-inline">ERROR TOAST</button>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">{ RULER SLIDER }</div>
+        <div class="row ruler-pair">
+          <div class="ruler-demo" data-ruler data-ruler-label="UI SCALE" data-ruler-value="100" data-ruler-stops='[{"value":75,"label":"75%"},{"value":100,"label":"100%"},{"value":125,"label":"125%"},{"value":150,"label":"150%"}]'>
+            <div class="ruler-label"></div>
+            <div class="ruler-body">
+              <div class="ruler-active"><span class="ruler-cap-tick"></span><span class="ruler-cap-text"></span><span class="ruler-cap-tick"></span></div>
+              <div class="ruler-track"></div>
+              <div class="ruler-ticks"></div>
+              <div class="ruler-thumb"></div>
+            </div>
+            <div class="ruler-tick-labels"></div>
+          </div>
+
+          <div class="ruler-demo" data-ruler data-ruler-label="TEXT SCALE" data-ruler-value="100" data-ruler-stops='[{"value":80,"label":"80%"},{"value":90,"label":"90%"},{"value":100,"label":"100%"},{"value":110,"label":"110%"},{"value":120,"label":"120%"}]'>
+            <div class="ruler-label"></div>
+            <div class="ruler-body">
+              <div class="ruler-active"><span class="ruler-cap-tick"></span><span class="ruler-cap-text"></span><span class="ruler-cap-tick"></span></div>
+              <div class="ruler-track"></div>
+              <div class="ruler-ticks"></div>
+              <div class="ruler-thumb"></div>
+            </div>
+            <div class="ruler-tick-labels"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <style>
+      .ruler-pair {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(260px, 1fr));
+        gap: 16px;
+      }
+
+      .ruler-demo {
+        width: 100%;
+        background: transparent;
+      }
+
+      .ruler-label {
+        margin-bottom: 14px;
+        text-transform: uppercase;
+      }
+
+      .ruler-body {
+        position: relative;
+        height: 58px;
+        cursor: pointer;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      .ruler-track {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 29px;
+        border-top: 2px solid var(--cyan);
+      }
+
+      .ruler-tick {
+        position: absolute;
+        width: 0;
+        height: 24px;
+        top: 17px;
+        border-left: 1px solid var(--white);
+        transform: translateX(-0.5px);
+      }
+
+      .ruler-thumb {
+        position: absolute;
+        width: 16px;
+        height: 28px;
+        top: 15px;
+        transform: translateX(-8px);
+        background: #c8c8c8;
+      }
+
+      .ruler-active {
+        position: absolute;
+        top: 0;
+        transform: translateX(-50%);
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .ruler-cap-tick {
+        width: 0;
+        height: 12px;
+        border-left: 1px solid var(--white);
+      }
+
+      .ruler-tick-labels {
+        position: relative;
+        height: 18px;
+        margin-top: 6px;
+      }
+
+      .ruler-tick-label {
+        position: absolute;
+        transform: translateX(-50%);
+        color: var(--aqua);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+    </style>
+
+    <script type="module">
+      import { initButtons } from './buttons/buttons.js';
+      import { initInputs } from './inputs/inputs.js';
+      import { initLists } from './lists/lists.js';
+      import { openModal, showToast } from './popups/popups.js';
+
+      initButtons(document);
+      initInputs(document);
+      initLists(document);
+
+      document.getElementById('open-modal')?.addEventListener('click', () => {
+        openModal('Confirm Deploy', 'Deploy selected mods to active profile?');
+      });
+
+      document.querySelectorAll('[data-toast]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const type = btn.getAttribute('data-toast');
+          showToast(`Session update: ${type}`, type);
+        });
+      });
+
+      function initRuler(node) {
+        const label = node.getAttribute('data-ruler-label') || '';
+        const stops = JSON.parse(node.getAttribute('data-ruler-stops') || '[]');
+        let value = Number(node.getAttribute('data-ruler-value') || 0);
+
+        const labelEl = node.querySelector('.ruler-label');
+        const body = node.querySelector('.ruler-body');
+        const active = node.querySelector('.ruler-active');
+        const activeText = node.querySelector('.ruler-cap-text');
+        const ticksWrap = node.querySelector('.ruler-ticks');
+        const tickLabels = node.querySelector('.ruler-tick-labels');
+        const thumb = node.querySelector('.ruler-thumb');
+
+        labelEl.textContent = `{ ${label.toUpperCase()} }`;
+
+        function posForIndex(i) {
+          if (stops.length <= 1) return 0;
+          return i / (stops.length - 1);
+        }
+
+        function indexForValue(v) {
+          const idx = stops.findIndex((s) => s.value === v);
+          return Math.max(0, idx);
+        }
+
+        function nearestIndex(ratio) {
+          if (stops.length <= 1) return 0;
+          return Math.max(0, Math.min(stops.length - 1, Math.round(ratio * (stops.length - 1))));
+        }
+
+        function ratioFromEvent(event) {
+          const rect = body.getBoundingClientRect();
+          const x = (event.touches && event.touches[0] ? event.touches[0].clientX : event.clientX) - rect.left;
+          return Math.max(0, Math.min(1, rect.width ? x / rect.width : 0));
+        }
+
+        function render(useRatio = null) {
+          const idx = useRatio === null ? indexForValue(value) : nearestIndex(useRatio);
+          const pos = useRatio === null ? posForIndex(idx) : useRatio;
+          const stop = stops[idx] || { label: '' };
+          const activeLabel = stop.label === '100%' ? 'DEFAULT' : String(stop.label || '').toUpperCase();
+          active.style.left = `${pos * 100}%`;
+          thumb.style.left = `${pos * 100}%`;
+          activeText.textContent = activeLabel;
+        }
+
+        ticksWrap.innerHTML = '';
+        tickLabels.innerHTML = '';
+        stops.forEach((stop, i) => {
+          const pos = posForIndex(i) * 100;
+          const tick = document.createElement('div');
+          tick.className = 'ruler-tick';
+          tick.style.left = `${pos}%`;
+          ticksWrap.appendChild(tick);
+
+          const tickLabel = document.createElement('div');
+          tickLabel.className = 'ruler-tick-label';
+          tickLabel.style.left = `${pos}%`;
+          tickLabel.textContent = stop.label;
+          tickLabels.appendChild(tickLabel);
+        });
+
+        let dragging = false;
+        body.addEventListener('click', (event) => {
+          if (dragging) return;
+          value = stops[nearestIndex(ratioFromEvent(event))]?.value ?? value;
+          render();
+        });
+
+        function startDrag(event) {
+          event.preventDefault();
+          dragging = true;
+          render(ratioFromEvent(event));
+        }
+
+        function moveDrag(event) {
+          if (!dragging) return;
+          render(ratioFromEvent(event));
+        }
+
+        function endDrag(event) {
+          if (!dragging) return;
+          dragging = false;
+          value = stops[nearestIndex(ratioFromEvent(event))]?.value ?? value;
+          render();
+        }
+
+        thumb.addEventListener('mousedown', startDrag);
+        thumb.addEventListener('touchstart', startDrag);
+        window.addEventListener('mousemove', moveDrag);
+        window.addEventListener('touchmove', moveDrag, { passive: false });
+        window.addEventListener('mouseup', endDrag);
+        window.addEventListener('touchend', endDrag);
+
+        render();
+      }
+
+      document.querySelectorAll('[data-ruler]').forEach(initRuler);
+    </script>
+  </body>
+</html>

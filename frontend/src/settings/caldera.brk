@@ -1,0 +1,71 @@
+// CALDERA settings definition
+
+appearance "APPEARANCE" {
+
+    theme {
+        label   = "Theme"
+        type    = cycle ["rebellion"]
+        default = "rebellion"
+        hot     = true
+        desc    = "Visual theme for the CALDERA interface."
+    }
+
+    ui_scale {
+        label   = "UI Scale"
+        type    = cycle ["75%", "100%", "125%", "150%"]
+        default = "100%"
+        hot     = true
+        desc    = "Scales the overall size of UI elements."
+    }
+
+    text_scale {
+        label   = "Text Scale"
+        type    = cycle ["80%", "90%", "100%", "110%", "120%"]
+        default = "100%"
+        hot     = true
+        desc    = "Scales the size of text across the interface."
+    }
+
+    accent_color {
+        label   = "Accent Color"
+        type    = color
+        default = "#13B5B7"
+        hot     = true
+        desc    = "Primary accent color used across the UI."
+    }
+}
+
+behaviour "BEHAVIOUR" {
+
+    parallel_downloads {
+        label   = "Parallel Downloads"
+        type    = range 1..16 step 1
+        default = 4
+        hot     = true
+        desc    = "Number of simultaneous mod downloads allowed."
+    }
+
+    metadata_cache {
+        label   = "Metadata Cache"
+        type    = cycle ["global", "per-game", "auto"]
+        default = "auto"
+        hot     = false
+        desc    = "Controls when and how mod metadata is cached locally."
+    }
+
+    sort_order {
+        label   = "Sort Order"
+        type    = cycle ["name", "date", "size", "status"]
+        default = "date"
+        hot     = true
+        desc    = "Default sort order for the mod list."
+    }
+
+    default_game {
+        label   = "Default Game"
+        type    = select
+        default = "none"
+        hot     = false
+        desc    = "The game CALDERA opens to on launch."
+    }
+}

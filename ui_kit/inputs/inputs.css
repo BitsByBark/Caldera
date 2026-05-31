@@ -1,0 +1,141 @@
+.input-shell {
+  border: var(--border);
+  background: var(--bg);
+  color: var(--white);
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 8px;
+}
+
+.input-shell:focus-within {
+  border: var(--border-cyan);
+}
+
+.input-text,
+.input-path-field {
+  width: 100%;
+  border: 0;
+  outline: 0;
+}
+
+.input-text::placeholder,
+.input-path-field::placeholder {
+  color: var(--aqua);
+}
+
+.input-path-btn {
+  border: 0;
+  border-left: var(--border);
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.dropdown {
+  position: relative;
+}
+
+.dropdown-button {
+  width: 100%;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.dropdown-list {
+  list-style: none;
+  border: var(--border);
+  border-top: 0;
+  display: none;
+}
+
+.dropdown.open .dropdown-list {
+  display: block;
+}
+
+.dropdown-item {
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.dropdown-item:hover {
+  background: var(--dark-teal);
+}
+
+.cycle {
+  justify-content: space-between;
+}
+
+.cycle-arrow {
+  border: 0;
+  cursor: pointer;
+  width: 20px;
+}
+
+.range-wrap {
+  justify-content: space-between;
+}
+
+.range-wrap input[type="range"] {
+  width: 100%;
+  accent-color: var(--cyan);
+}
+
+.range-value {
+  min-width: 44px;
+  text-align: right;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.toggle-pill {
+  width: 36px;
+  height: 20px;
+  border: var(--border);
+  background: #555;
+  position: relative;
+}
+
+.toggle-pill::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  background: var(--white);
+}
+
+.toggle.on .toggle-pill {
+  background: var(--cyan);
+  border: var(--border-cyan);
+}
+
+.toggle.on .toggle-pill::after {
+  left: 18px;
+  background: var(--bg);
+}
+
+.color-input {
+  cursor: pointer;
+}
+
+.color-swatch {
+  width: 18px;
+  height: 18px;
+  border: var(--border);
+  flex: 0 0 auto;
+}
+
+.keybind-capture {
+  cursor: pointer;
+}
+
+.keybind-capture.capturing {
+  border: var(--border-cyan);
+}

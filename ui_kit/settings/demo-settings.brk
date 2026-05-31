@@ -1,0 +1,73 @@
+// CALDERA demo settings — one of each input type
+
+general "GENERAL" {
+
+    enable_telemetry {
+        label   = "Usage Telemetry"
+        type    = bool
+        default = false
+        hot     = true
+        desc    = "Send anonymous usage data to help improve CALDERA."
+    }
+
+    default_game {
+        label   = "Default Game"
+        type    = select
+        default = "none"
+        hot     = false
+        desc    = "The game CALDERA opens to on launch."
+    }
+
+    install_path {
+        label   = "Mod Install Path"
+        type    = path
+        default = "~/CALDERA/mods"
+        hot     = false
+        desc    = "Root directory where downloaded mods are stored."
+    }
+
+    display_name {
+        label   = "Display Name"
+        type    = text
+        default = "operator"
+        hot     = true
+    }
+}
+
+downloads "DOWNLOADS" {
+
+    max_threads {
+        label   = "Parallel Downloads"
+        type    = range 1..16 step 1
+        default = 4
+        hot     = true
+        desc    = "Number of simultaneous mod downloads allowed."
+    }
+
+    conflict_theme {
+        label   = "Conflict Highlight"
+        type    = color
+        default = "#E63636"
+        hot     = true
+        desc    = "Color used to highlight conflicting mod files."
+    }
+
+    sort_order {
+        label   = "Sort Order"
+        type    = cycle ["name", "date", "size", "status"]
+        default = "date"
+        hot     = true
+        desc    = "Default sort order for the mod list."
+    }
+}
+
+keybinds "KEYBINDS" {
+
+    open_settings {
+        label   = "Open Settings"
+        type    = keybind
+        default = "Ctrl+Comma"
+        hot     = false
+        desc    = "Keybind to open the settings panel."
+    }
+}
