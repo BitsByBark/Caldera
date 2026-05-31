@@ -8,7 +8,7 @@
   <div class="topbar-inner">
     <div class="left-cluster">
       <img class="logo" src="/caldera_logo.svg" alt="CALDERA" />
-      <button class="library-tab">&gt;&gt; GAME LIBRARY</button>
+      <button class="library-tab" on:click={() => push('/')}>&gt;&gt; GAME LIBRARY</button>
     </div>
 
     <button
