@@ -20,7 +20,9 @@ pub fn get_game_config_stub(game_id: String) -> GameConfig {
         game_id: game_id.clone(),
         name: format!("Game {}", game_id),
         mod_directory: "~/CALDERA/mods".to_string(),
-        profiles: vec!["default".to_string()],
+        deployer: None,
+        active_profile: None,
+        profiles: Vec::new(),
     }
 }
 

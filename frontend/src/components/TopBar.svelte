@@ -2,12 +2,18 @@
   import { push } from 'svelte-spa-router';
 
   export let settingsActive = false;
+  export let backRoute = '';
 </script>
 
 <div class="topbar">
   <div class="topbar-inner">
     <div class="left-cluster">
-      <img class="logo" src="/caldera_logo.svg" alt="CALDERA" />
+      {#if backRoute}
+        <button class="back-btn" on:click={() => push(backRoute)}>&lt; BACK</button>
+      {/if}
+      <button class="logo-btn" on:click={() => push(backRoute || '/')}>
+        <img class="logo" src="/caldera_logo.svg" alt="CALDERA" />
+      </button>
       <button class="library-tab" on:click={() => push('/')}>&gt;&gt; GAME LIBRARY</button>
     </div>
 
@@ -41,24 +47,48 @@
   .left-cluster {
     display: inline-flex;
     width: fit-content;
-   align-items: bottom;
+    align-items: center;
     gap: 12px;
   }
 
+  .logo-btn {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+
   .logo {
-    height: 75;
+    height: 32px;
     width: auto;
     color: var(--text);
   }
 
-  .library-tab { align-self: bottom;
+  .library-tab {
     border: var(--border);
     background: transparent;
     color: var(--interactive);
-    font-family: var(--font); height: fit-content;
+    font-family: var(--font);
+    height: fit-content;
     padding: 6px 10px;
     text-transform: uppercase;
     border-radius: var(--border-radius);
+  }
+
+  .back-btn {
+    border: var(--border-subtle);
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font);
+    padding: 6px 10px;
+    text-transform: uppercase;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+  }
+
+  .back-btn:hover {
+    border: var(--border);
+    color: var(--interactive);
   }
 
   .library-tab:hover {

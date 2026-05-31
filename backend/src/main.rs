@@ -11,6 +11,11 @@ fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths 
 }
 
 #[tauri::command(rename_all = "camelCase")]
+fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(), String> {
+    caldera_backend::ensure_game_cache(app_id, steam_path)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 fn get_game_config(game_id: String) -> GameConfig {
     caldera_backend::get_game_config(game_id)
 }
@@ -27,6 +32,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_steam_games,
             get_game_artwork,
+            ensure_game_cache,
             get_game_config,
             save_game_config
         ])

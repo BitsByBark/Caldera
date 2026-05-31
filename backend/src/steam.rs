@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{ArtworkPaths, SteamGame};
+use serde_json::json;
 
 #[derive(Debug, Clone)]
 enum VdfValue {
@@ -280,12 +281,14 @@ pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPa
         return ArtworkPaths {
             banner: String::new(),
             hero: String::new(),
+            logo: String::new(),
         };
     };
 
     let cache = root.join("appcache").join("librarycache");
     let banner = cache.join(format!("{}_library_600x900.jpg", app_id));
     let hero = cache.join(format!("{}_library_hero.jpg", app_id));
+    let logo = cache.join(format!("{}_logo.png", app_id));
 
     ArtworkPaths {
         banner: if banner.exists() {
@@ -298,5 +301,85 @@ pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPa
         } else {
             String::new()
         },
+        logo: if logo.exists() {
+            logo.to_string_lossy().to_string()
+        } else {
+            String::new()
+        },
     }
+}
+
+fn base_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("caldera")
+}
+
+fn appcache_library_path(steam_root: &Path, app_id: &str, suffix: &str) -> PathBuf {
+    steam_root
+        .join("appcache")
+        .join("librarycache")
+        .join(format!("{}_{}", app_id, suffix))
+}
+
+fn copy_if_missing(src: &Path, dest: &Path) -> Result<(), String> {
+    if !src.exists() || dest.exists() {
+        return Ok(());
+    }
+    fs::copy(src, dest)
+        .map(|_| ())
+        .map_err(|e| format!("failed copying {}: {}", src.display(), e))
+}
+
+pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(), String> {
+    let steam_root = resolve_steam_root(steam_path.clone()).ok_or_else(|| {
+        "Steam installation not found. Set your Steam path in Settings.".to_string()
+    })?;
+
+    let cache_root = base_config_dir().join("cache").join(&app_id);
+    let artwork_dir = cache_root.join("artwork");
+    let mods_dir = cache_root.join("mods");
+    let profiles_dir = cache_root.join("profiles");
+
+    fs::create_dir_all(&artwork_dir)
+        .map_err(|e| format!("failed creating cache artwork dir: {}", e))?;
+    fs::create_dir_all(&mods_dir).map_err(|e| format!("failed creating cache mods dir: {}", e))?;
+    fs::create_dir_all(&profiles_dir)
+        .map_err(|e| format!("failed creating cache profiles dir: {}", e))?;
+
+    let config_toml = cache_root.join("config.toml");
+    if !config_toml.exists() {
+        fs::write(&config_toml, "").map_err(|e| format!("failed writing config.toml: {}", e))?;
+    }
+
+    let banner_src = appcache_library_path(&steam_root, &app_id, "library_600x900.jpg");
+    let hero_src = appcache_library_path(&steam_root, &app_id, "library_hero.jpg");
+    let logo_src = appcache_library_path(&steam_root, &app_id, "logo.png");
+
+    copy_if_missing(&banner_src, &artwork_dir.join("banner.jpg"))?;
+    copy_if_missing(&hero_src, &artwork_dir.join("hero.jpg"))?;
+    copy_if_missing(&logo_src, &artwork_dir.join("logo.png"))?;
+
+    let game_meta = get_steam_games(steam_path)?
+        .into_iter()
+        .find(|g| g.app_id == app_id);
+
+    let meta = match game_meta {
+        Some(game) => json!({
+            "app_id": game.app_id,
+            "name": game.name,
+            "install_path": game.install_path
+        }),
+        None => json!({
+            "app_id": app_id,
+            "name": "",
+            "install_path": ""
+        }),
+    };
+
+    let meta_path = cache_root.join("meta.json");
+    fs::write(&meta_path, serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()))
+        .map_err(|e| format!("failed writing meta.json: {}", e))?;
+
+    Ok(())
 }

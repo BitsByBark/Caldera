@@ -14,6 +14,7 @@ pub struct SteamGame {
 pub struct ArtworkPaths {
     pub banner: String,
     pub hero: String,
+    pub logo: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +22,8 @@ pub struct GameConfig {
     pub game_id: String,
     pub name: String,
     pub mod_directory: String,
+    pub deployer: Option<String>,
+    pub active_profile: Option<String>,
     pub profiles: Vec<String>,
 }
 
@@ -30,6 +33,10 @@ pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, Str
 
 pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths {
     steam::get_game_artwork(app_id, steam_path)
+}
+
+pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(), String> {
+    steam::ensure_game_cache(app_id, steam_path)
 }
 
 pub fn get_game_config(game_id: String) -> GameConfig {
