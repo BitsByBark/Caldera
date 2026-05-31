@@ -1,13 +1,13 @@
 use caldera_backend::{ArtworkPaths, GameConfig, SteamGame};
 
-#[tauri::command]
-fn get_steam_games() -> Vec<SteamGame> {
-    caldera_backend::get_steam_games()
+#[tauri::command(rename_all = "camelCase")]
+fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, String> {
+    caldera_backend::get_steam_games(steam_path)
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn get_game_artwork(app_id: String) -> ArtworkPaths {
-    caldera_backend::get_game_artwork(app_id)
+fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths {
+    caldera_backend::get_game_artwork(app_id, steam_path)
 }
 
 #[tauri::command(rename_all = "camelCase")]

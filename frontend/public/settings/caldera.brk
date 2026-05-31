@@ -53,6 +53,15 @@ behaviour "BEHAVIOUR" {
         desc    = "Controls when and how mod metadata is cached locally."
     }
 
+
+    steam_path {
+        label   = "Steam Path"
+        type    = path
+        default = ""
+        hot     = false
+        desc    = "Path to your Steam installation. Leave empty to use the default."
+    }
+
     sort_order {
         label   = "Sort Order"
         type    = cycle ["name", "date", "size", "status"]

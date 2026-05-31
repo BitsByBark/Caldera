@@ -40,7 +40,7 @@
 
   .left-cluster {
     display: inline-flex;
-    width: fit-content; height: fit-content;
+    width: fit-content;
    align-items: bottom;
     gap: 12px;
   }
@@ -51,11 +51,11 @@
     color: var(--text);
   }
 
-  .library-tab {
+  .library-tab { align-self: bottom;
     border: var(--border);
     background: transparent;
     color: var(--interactive);
-    font-family: var(--font);
+    font-family: var(--font); height: fit-content;
     padding: 6px 10px;
     text-transform: uppercase;
     border-radius: var(--border-radius);

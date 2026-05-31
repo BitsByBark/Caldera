@@ -4,17 +4,32 @@
   import { push } from 'svelte-spa-router';
   import Button from '../components/Button.svelte';
   import TopBar from '../components/TopBar.svelte';
-  import { gameList, loadGameList, currentGame } from '../stores/game';
-  import { getGameArtwork } from '../lib/tauri';
+  import { gameList, currentGame } from '../stores/game';
+  import { settings } from '../stores/settings.js';
+  import { getSteamGames, getGameArtwork } from '../lib/tauri';
+  import { showToast } from '../components/Toast.svelte';
 
   let artworkById = {};
   let posterLoadFailed = {};
 
   onMount(async () => {
-    await loadGameList();
-    const list = get(gameList);
-    for (const game of list) {
-      artworkById[game.app_id] = await getGameArtwork(game.app_id);
+    const steamPath = get(settings).steam_path || null;
+    try {
+      const games = await getSteamGames(steamPath);
+      gameList.set(games);
+
+      if (games.length > 0) {
+        showToast(`Found ${games.length} games`, 'success');
+      } else {
+        showToast('No games found in Steam library.', 'warning');
+      }
+
+      for (const game of games) {
+        artworkById[game.app_id] = await getGameArtwork(game.app_id, steamPath);
+      }
+    } catch (err) {
+      showToast(String(err), 'error');
+      gameList.set([]);
     }
   });
 

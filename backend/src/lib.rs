@@ -24,12 +24,12 @@ pub struct GameConfig {
     pub profiles: Vec<String>,
 }
 
-pub fn get_steam_games() -> Vec<SteamGame> {
-    steam::get_steam_games_stub()
+pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, String> {
+    steam::get_steam_games(steam_path)
 }
 
-pub fn get_game_artwork(app_id: String) -> ArtworkPaths {
-    steam::get_game_artwork_stub(app_id)
+pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths {
+    steam::get_game_artwork(app_id, steam_path)
 }
 
 pub fn get_game_config(game_id: String) -> GameConfig {

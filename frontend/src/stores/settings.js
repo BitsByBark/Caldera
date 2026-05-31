@@ -7,6 +7,7 @@ export const settings = writable({
     accent_color: '#E8B84B',
     parallel_downloads: 4,
     metadata_cache: 'auto',
+    steam_path: '',
     sort_order: 'date',
     default_game: 'none',
 })

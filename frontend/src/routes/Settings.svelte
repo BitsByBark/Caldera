@@ -1,12 +1,16 @@
 <script>
   import { onMount } from 'svelte';
   import { pop } from 'svelte-spa-router';
+  import { get } from 'svelte/store';
   import TopBar from '../components/TopBar.svelte';
   import Button from '../components/Button.svelte';
   import SettingsListItem from '../components/SettingsListItem.svelte';
   import RulerSlider from '../components/RulerSlider.svelte';
   import { parseBrk } from '../settings/settings.js';
   import { settings } from '../stores/settings.js';
+  import { gameList } from '../stores/game.js';
+  import { getSteamGames } from '../lib/tauri.js';
+  import { showToast } from '../components/Toast.svelte';
 
   let groups = [];
   let activeGroupId = '';
@@ -31,8 +35,21 @@
     const parsed = parseBrk(text);
     groups = parsed.groups;
     activeGroupId = parsed.groups[0]?.id || '';
-
   });
+
+  async function scanSteam() {
+    const steamPath = get(settings).steam_path || null;
+    try {
+      const games = await getSteamGames(steamPath);
+      gameList.set(games);
+      showToast(`Found ${games.length} games`, 'success');
+      if (games.length === 0) {
+        showToast('No games found in Steam library.', 'warning');
+      }
+    } catch (err) {
+      showToast(String(err), 'error');
+    }
+  }
 
   function updateSetting(key, value) {
     settings.update((s) => ({ ...s, [key]: value }));
@@ -104,6 +121,12 @@
                     value={$settings[entry.id] ?? entry.default}
                     onChange={(v) => updateSetting(entry.id, v)}
                   />
+
+                  {#if entry.id === 'steam_path'}
+                    <div class="scan-row">
+                      <Button variant="primary" icon="+" label="SCAN" onClick={scanSteam} />
+                    </div>
+                  {/if}
                 {/if}
               </div>
             {/each}
@@ -226,5 +249,10 @@
   .entry-desc {
     color: var(--text-muted);
     font-size: 12px;
+  }
+
+  .scan-row {
+    margin-top: 8px;
+    width: 180px;
   }
 </style>
