@@ -52,6 +52,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Preflight icon checks (Linux)
+        run: |
+          ./scripts/check-icons.sh
+
       - name: Build Tauri (Linux)
         working-directory: backend
         run: |
@@ -98,6 +102,11 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Preflight icon checks (Windows)
+        shell: pwsh
+        run: |
+          ./scripts/check-icons.ps1
 
       - name: Build Tauri (Windows)
         working-directory: backend
