@@ -1,10 +1,12 @@
 <script>
   import { onMount, tick } from 'svelte';
+  import { push } from 'svelte-spa-router';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
   import TopBar from '../components/TopBar.svelte';
   import Button from '../components/Button.svelte';
   import Dropdown from '../components/Dropdown.svelte';
+  import Dropup from '../components/Dropup.svelte';
   import { gameList } from '../stores/game.js';
   import { settings } from '../stores/settings.js';
   import { sessionLog, addLog } from '../stores/log.js';
@@ -12,8 +14,7 @@
 
   export let params = {};
 
-  const deployerOptions = ['CYBERPUNK 2077', 'UNREAL ENGINE', 'NONE'];
-
+  let deployerCatalog = [];
   let game = null;
   let gameConfig = {
     game_id: '',
@@ -27,15 +28,71 @@
   let editMode = false;
   let logExpanded = false;
   let logViewport;
+  let activePaneTab = 'DOWNLOADED_MODS';
+  let modlistRows = [];
+  const leftTabs = [
+    { id: 'DOWNLOADED_MODS', label: 'DOWNLOADED MODS' },
+    { id: 'COLLECTIONS', label: 'COLLECTIONS' },
+  ];
+  const defaultProfileTab = { id: 'DEFAULT_PROFILE', label: 'DEFAULT PROFILE' };
 
   $: game = $gameList.find((g) => g.app_id === params.id) || null;
-  $: profileOptions = [...(gameConfig.profiles || []), '^ CREATE PROFILE'];
-  $: activeProfileValue = gameConfig.active_profile || profileOptions[0] || '^ CREATE PROFILE';
-  $: deployerValue = gameConfig.deployer || '^ SELECT DEPLOYER';
+  $: profileTabs = (gameConfig.profiles || []).length ? gameConfig.profiles : ['DEFAULT'];
+  $: activeProfileTab = (gameConfig.active_profile && profileTabs.includes(gameConfig.active_profile))
+    ? gameConfig.active_profile
+    : profileTabs[0];
+  $: profileOptions = (gameConfig.profiles || []).length
+    ? [...gameConfig.profiles, '^ CREATE PROFILE']
+    : ['DEFAULT', '^ CREATE PROFILE'];
+  $: activeProfileValue = (gameConfig.profiles || []).length
+    ? activeProfileTab
+    : 'DEFAULT';
+  $: deployerLabelById = new Map(deployerCatalog.map((d) => [d.id, d.name.toUpperCase()]));
+  $: deployerIdByLabel = new Map(deployerCatalog.map((d) => [d.name.toUpperCase(), d.id]));
+  $: deployerOptions = [...deployerCatalog.map((d) => d.name.toUpperCase()), 'NONE'];
+  $: deployerValue = !gameConfig.deployer || gameConfig.deployer === 'NONE'
+    ? 'SELECT DEPLOYER'
+    : deployerLabelById.get(gameConfig.deployer) || gameConfig.deployer;
   $: lastLog = $sessionLog.length ? $sessionLog[$sessionLog.length - 1] : { time: '--:--', message: 'No log entries yet', type: 'default' };
 
   $: if (logExpanded) {
     scrollLogToBottom();
+  }
+
+  function toAssetUrl(path) {
+    if (!path) return null;
+    return window.__TAURI__ ? `asset://localhost${path}` : path;
+  }
+
+  function formatAddedAt(raw) {
+    if (!raw) return '--';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}-${mm}-${yy} | ${hh}:${min}`;
+  }
+
+  function isCompressedFilename(name) {
+    const lower = String(name || '').toLowerCase();
+    return ['.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz'].some((ext) => lower.endsWith(ext));
+  }
+
+  function isDeployableByExtension(rowName, sourcePath) {
+    const lowerName = String(rowName || '').trim().toLowerCase();
+    const lowerSourceName = String(sourcePath || '')
+      .split('/')
+      .pop()
+      .split('\\')
+      .pop()
+      .trim()
+      .toLowerCase();
+    return ['.pak', '.utoc', '.ucas'].some(
+      (ext) => lowerName.endsWith(ext) || lowerSourceName.endsWith(ext),
+    );
   }
 
   onMount(async () => {
@@ -48,20 +105,54 @@
     }
 
     try {
-      artwork = await invoke('get_game_artwork', { appId: params.id, steamPath });
+      deployerCatalog = await invoke('get_available_deployers');
     } catch (err) {
-      showToast(String(err), 'error');
+      addLog(`Failed to load deployers: ${String(err)}`, 'error');
+      deployerCatalog = [];
     }
 
     try {
       await invoke('ensure_game_cache', { appId: params.id, steamPath });
+      const raw = await invoke('get_game_artwork', { appId: params.id, steamPath });
+      artwork = {
+        hero: toAssetUrl(raw.hero),
+        logo: toAssetUrl(raw.logo),
+        banner: toAssetUrl(raw.banner),
+      };
+
+      const configured = await invoke('get_configured_deployer', { appId: params.id });
+      if (configured) {
+        gameConfig = { ...gameConfig, deployer: configured };
+      }
     } catch (err) {
-      showToast(String(err), 'error');
+      addLog(`Failed to load artwork: ${String(err)}`, 'error');
+    }
+
+    try {
+      const listings = await invoke('get_modlist_listings', { appId: params.id });
+      modlistRows = (listings || []).map((row) => ({
+        modId: row.mod_id || 'unknown',
+        name: row.name || row.mod_id || 'Unknown Mod',
+        sourcePath: row.source_path || null,
+        added: formatAddedAt(row.added_at),
+        status: String(row.status || 'unknown').toUpperCase(),
+        compressed: isCompressedFilename(row.name || row.mod_id || ''),
+        deployable: !!row.deployable,
+        deployerReason: row.deployer_reason || null,
+      }));
+    } catch (err) {
+      addLog(`Failed to load modlist listings: ${String(err)}`, 'warning');
+      modlistRows = [];
     }
 
     addLog('"CALDERA" initialised successfully', 'success');
     addLog(`Loading game: "${game?.name || gameConfig.name || params.id}"`, 'info');
-    addLog('No deployer configured — select one to get started', 'warning');
+    if (!gameConfig.deployer || gameConfig.deployer === 'NONE') {
+      addLog('No deployer configured — select one to get started', 'warning');
+    } else {
+      const deployerName = deployerLabelById.get(gameConfig.deployer) || gameConfig.deployer;
+      addLog(`Deployer active: ${deployerName}`, 'success');
+    }
   });
 
   function onSetup() {
@@ -85,10 +176,72 @@
     addLog(`Active profile set to ${v}`, 'success');
   }
 
-  function onDeployerChange(v) {
-    const next = v === 'NONE' ? null : v;
-    gameConfig = { ...gameConfig, deployer: next };
-    addLog(`Deployer set to ${v}`, 'success');
+  async function onDeployerChange(v) {
+    const nextId = v === 'NONE' ? 'NONE' : (deployerIdByLabel.get(v) || v);
+
+    try {
+      await invoke('set_game_deployer', { appId: params.id, deployerId: nextId });
+      gameConfig = { ...gameConfig, deployer: nextId === 'NONE' ? null : nextId };
+      addLog(`Deployer set to ${v}`, 'success');
+    } catch (err) {
+      addLog(`Failed to set deployer: ${String(err)}`, 'error');
+    }
+  }
+
+  function onUpdateAll() {
+    addLog('Update all requested', 'info');
+  }
+
+  function selectPaneTab(tabId) {
+    activePaneTab = tabId;
+  }
+
+  function openProfilePage() {
+    push(`/game/${params.id}/profile`);
+  }
+
+  async function onUncompressRow(row) {
+    if (!row?.sourcePath) {
+      addLog(`No source path available for ${row?.name || 'archive'}`, 'warning');
+      return;
+    }
+    try {
+      await invoke('uncompress_archive', { archivePath: row.sourcePath });
+      addLog(`Uncompress complete: ${row.name}`, 'success');
+      const listings = await invoke('get_modlist_listings', { appId: params.id });
+      modlistRows = (listings || []).map((item) => ({
+        modId: item.mod_id || 'unknown',
+        name: item.name || item.mod_id || 'Unknown Mod',
+        sourcePath: item.source_path || null,
+        added: formatAddedAt(item.added_at),
+        status: String(item.status || 'unknown').toUpperCase(),
+        compressed: isCompressedFilename(item.name || item.mod_id || ''),
+        deployable: !!item.deployable,
+        deployerReason: item.deployer_reason || null,
+      }));
+    } catch (err) {
+      addLog(`Uncompress failed: ${String(err)}`, 'error');
+    }
+  }
+
+  async function onDeployListing(row) {
+    try {
+      await invoke('deploy_listing', { appId: params.id, listingId: row.modId });
+      addLog(`Deployed listing: ${row.name}`, 'success');
+      const listings = await invoke('get_modlist_listings', { appId: params.id });
+      modlistRows = (listings || []).map((item) => ({
+        modId: item.mod_id || 'unknown',
+        name: item.name || item.mod_id || 'Unknown Mod',
+        sourcePath: item.source_path || null,
+        added: formatAddedAt(item.added_at),
+        status: String(item.status || 'unknown').toUpperCase(),
+        compressed: isCompressedFilename(item.name || item.mod_id || ''),
+        deployable: !!item.deployable,
+        deployerReason: item.deployer_reason || null,
+      }));
+    } catch (err) {
+      addLog(`Deploy failed: ${String(err)}`, 'error');
+    }
   }
 
   async function scrollLogToBottom() {
@@ -99,64 +252,172 @@
   }
 </script>
 
-<section class="page">
+<section class="page game-detail">
   <TopBar backRoute="/" />
 
-  <main class="content game-detail">
-    <section class="hero hero-section">
-      {#if artwork.hero}
-        <img class="hero-image" src={artwork.hero} alt={game?.name || gameConfig.name || params.id} />
-      {:else}
-        <div class="hero-fallback"></div>
-      {/if}
-
-      <div class="hero-logo">
-        {#if artwork.logo}
-          <img src={artwork.logo} alt={game?.name || gameConfig.name || params.id} />
+  <main class={`hero-section ${editMode ? 'edit-mode' : ''}`}>
+    {#if editMode}
+      <section class="hero hero-edit">
+        <div class="hero-edit-left">
+          {#if artwork.logo}
+            <img
+              src={artwork.logo}
+              alt={game?.name || gameConfig.name || params.id}
+              on:error={() => (artwork = { ...artwork, logo: '' })}
+            />
+          {:else}
+            <div class="hero-name">{game?.name || gameConfig.name || params.id}</div>
+          {/if}
+        </div>
+        <div class="hero-edit-right">
+          <button class="btn-primary launch-btn">-- LAUNCH</button>
+        </div>
+      </section>
+    {:else}
+      <section class="hero">
+        {#if artwork.hero}
+          <img
+            class="hero-image"
+            src={artwork.hero}
+            alt={game?.name || gameConfig.name || params.id}
+            on:error={() => (artwork = { ...artwork, hero: '' })}
+          />
         {:else}
-          <div class="hero-name">{game?.name || gameConfig.name || params.id}</div>
+          <div class="hero-fallback">
+            <div class="hero-placeholder-name">{game?.name || gameConfig.name || params.id}</div>
+          </div>
         {/if}
+
+        <div class="hero-logo">
+          {#if artwork.logo}
+            <img
+              src={artwork.logo}
+              alt={game?.name || gameConfig.name || params.id}
+              on:error={() => (artwork = { ...artwork, logo: '' })}
+            />
+          {:else}
+            <div class="hero-name">{game?.name || gameConfig.name || params.id}</div>
+          {/if}
+        </div>
+
+        <div class="hero-setup">
+          <Button variant="secondary" label="// SETUP" onClick={onSetup} />
+        </div>
+      </section>
+    {/if}
+  </main>
+
+  <section class="action-bar">
+    {#if editMode}
+      <div class="action-left">
+        <button class="edit-btn done-btn" on:click={toggleEditMode}>// DONE</button>
+        <button class="edit-btn update-all-btn" on:click={onUpdateAll}>^^ UPDATE ALL</button>
       </div>
-
-      <div class="hero-setup">
-        <Button variant="secondary" label="// SETUP" onClick={onSetup} />
+    {:else}
+      <div class="action-left">
+        <button class={`edit-btn ${editMode ? 'active' : ''}`} on:click={toggleEditMode}>
+          {editMode ? '// DONE' : '// EDIT'}
+        </button>
       </div>
-    </section>
+    {/if}
 
-    <section class="action-bar">
-      <button class={`edit-btn ${editMode ? 'active' : ''}`} on:click={toggleEditMode}>
-        {editMode ? '// DONE' : '// EDIT'}
-      </button>
-
-      <div class="selectors-right">
-        <div class="selector">
-          <span class="selector-label">PROFILE :</span>
-          <div class="selector-input">
+    <div class="selectors-right">
+      <div class="selector">
+        <span class="selector-label">PROFILE :</span>
+        <div class="selector-input">
+          {#if editMode}
             <Dropdown options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
-        <div class="selector">
-          <span class="selector-label">DEPLOYER =</span>
-          <div class="selector-input">
-            <Dropdown options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
-          </div>
+          {:else}
+            <Dropup options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
+          {/if}
         </div>
       </div>
+
+      <div class="divider"></div>
+
+      <div class="selector">
+        <span class="selector-label">DEPLOYER =</span>
+        <div class="selector-input">
+          {#if editMode}
+            <Dropdown options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
+          {:else}
+            <Dropup options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
+          {/if}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {#if editMode}
+    <section class="tab-bar">
+      <div class="mods-tabs">
+        {#each leftTabs as tab}
+          <button class={`pane-tab ${activePaneTab === tab.id ? 'active' : ''}`} on:click={() => selectPaneTab(tab.id)}>{tab.label}</button>
+        {/each}
+      </div>
+      <button class={`pane-tab ${activePaneTab === defaultProfileTab.id ? 'active' : ''}`} on:click={openProfilePage}>{defaultProfileTab.label}</button>
     </section>
 
-    <section class={`log-panel ${logExpanded ? 'expanded' : 'collapsed'}`}>
+    <section class="modlist-pane-wrap">
+      {#if activePaneTab === 'DOWNLOADED_MODS'}
+        <article class="modlist-pane">
+          <h3>MODS PLAIN AND SIMPLE</h3>
+          <div class="mods-table">
+            <div class="mods-table-head">
+              <div class="mods-col mods-col-name">MOD NAME</div>
+              <div class="mods-col mods-col-date">DATE ADDED</div>
+              <div class="mods-col mods-col-status">STATUS</div>
+            </div>
+            {#each modlistRows as row}
+              <div class="mods-table-row">
+                <div class="mods-col mods-col-name">{row.name}</div>
+                <div class="mods-col mods-col-date">{row.added}</div>
+                <div class="mods-col mods-col-status">
+                  {#if row.compressed}
+                    <button class="uncompress-btn" on:click={() => onUncompressRow(row)}>UNCOMPRESS</button>
+                  {:else if isDeployableByExtension(row.name, row.sourcePath)}
+                    <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
+                  {:else if row.deployable}
+                    <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
+                  {:else}
+                    {row.status}
+                  {/if}
+                </div>
+              </div>
+            {/each}
+            {#if !modlistRows.length}
+              <div class="mods-table-row mods-empty-row">
+                <div class="mods-col mods-col-name">No listings found for this game id.</div>
+                <div class="mods-col mods-col-date">--</div>
+                <div class="mods-col mods-col-status">--</div>
+              </div>
+            {/if}
+          </div>
+        </article>
+      {:else}
+        <article class="modlist-pane">
+          <h3>COLLECTIONS</h3>
+          <p>COLLECTIONS PLACEHOLDER</p>
+        </article>
+      {/if}
+    </section>
+  {/if}
+
+  <section class={`log-panel ${logExpanded ? 'expanded' : 'collapsed'}`}>
     <div class="log-head">
       <div class="preview">
         {#each $sessionLog.slice(-3) as entry}
           <div class={`line ${entry.type || 'default'}`}>
             <span class="time">{entry.time}</span><span class="pipe"> | </span><span>{entry.message}</span>
+            {#if entry.progress !== undefined}
+              <div class="log-progress">
+                <div class="log-progress-fill" style={`width:${Math.max(0, Math.min(100, entry.progress))}%`}></div>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
-      <button class="toggle" on:click={() => (logExpanded = !logExpanded)}>{logExpanded ? 'v' : '^'}</button>
+      <button class="toggle" on:click={() => (logExpanded = !logExpanded)}>{logExpanded ? '↑' : '↓'}</button>
     </div>
 
     {#if logExpanded}
@@ -164,49 +425,74 @@
         {#each $sessionLog as entry}
           <div class={`line ${entry.type || 'default'}`}>
             <span class="time">{entry.time}</span><span class="pipe"> | </span><span>{entry.message}</span>
+            {#if entry.progress !== undefined}
+              <div class="log-progress">
+                <div class="log-progress-fill" style={`width:${Math.max(0, Math.min(100, entry.progress))}%`}></div>
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
     {/if}
   </section>
-  </main>
 </section>
 
 <style>
-  .page {
-    min-height: 100vh;
+  .game-detail {
     background: var(--bg);
     color: var(--text);
     font-family: var(--font);
     display: flex;
     flex-direction: column;
-  }
-
-  .content {
-    padding-top: 56px;
     height: 100vh;
+    padding-top: var(--topbar-height, 56px);
     box-sizing: border-box;
   }
 
-  .game-detail {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
+  .hero-section {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .hero-section.edit-mode {
+    flex: 0;
   }
 
   .hero {
     position: relative;
-    height: 340px;
+    height: 100%;
     width: 100%;
     border-bottom: var(--border-subtle);
     overflow: hidden;
     background: var(--bg-surface);
   }
 
-  .hero-section {
-    flex: 1;
-    min-height: 120px;
-    overflow: hidden;
+  .hero-edit {
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    box-sizing: border-box;
+  }
+
+  .hero-edit-left img {
+    max-height: 48px;
+    max-width: 260px;
+    object-fit: contain;
+    display: block;
+  }
+
+  .hero-edit-right {
+    width: 160px;
+  }
+
+  .launch-btn {
+    width: 100%;
+    height: 32px;
+    border-radius: var(--border-radius);
   }
 
   .hero-image {
@@ -221,6 +507,15 @@
     width: 100%;
     height: 100%;
     background: var(--bg-surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hero-placeholder-name {
+    color: var(--text-muted);
+    font-family: var(--font);
+    text-transform: uppercase;
   }
 
   .hero-logo {
@@ -231,15 +526,22 @@
   }
 
   .hero-logo img {
-    max-height: 80px;
-    max-width: 300px;
+    max-height: 64px;
+    max-width: 240px;
     object-fit: contain;
     display: block;
   }
 
   .hero-name {
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 700;
+    color: var(--text);
+  }
+
+  .hero-edit .hero-name {
+    font-size: 20px;
+    font-weight: 400;
+    font-family: var(--font);
     color: var(--text);
   }
 
@@ -263,14 +565,32 @@
     box-sizing: border-box;
   }
 
+  .action-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
   .edit-btn {
     border: var(--border-subtle);
     background: transparent;
     color: var(--text);
-    font-family: var(--font);
+    font-family: var(--font-ui);
     padding: 8px 12px;
     border-radius: var(--border-radius);
     cursor: pointer;
+  }
+
+  .done-btn {
+    background: var(--action);
+    color: #fff;
+    border: 0;
+  }
+
+  .update-all-btn {
+    background: var(--interactive);
+    color: var(--btn-primary-text);
+    border: 0;
   }
 
   .edit-btn.active {
@@ -304,10 +624,161 @@
 
   .selector-label {
     color: var(--text-muted);
+    font-family: var(--font-ui);
   }
 
   .selector-input {
     width: 240px;
+  }
+
+  .tab-bar {
+    width: 100%;
+    background: var(--bg-surface);
+    border-bottom: var(--border-subtle);
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    box-sizing: border-box;
+  }
+
+  .mods-tabs,
+  .profile-tabs {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .pane-tab {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 1em;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    padding: 10px 18px;
+    border-radius: 0;
+    line-height: 1;
+    outline: none;
+    box-shadow: none;
+  }
+
+  .pane-tab.active {
+    border-color: var(--interactive);
+    background: var(--bg-surface);
+    color: var(--interactive);
+    outline: none;
+    box-shadow: none;
+  }
+
+  .pane-tab:hover {
+    color: var(--action);
+  }
+
+  .pane-tab:focus,
+  .pane-tab:focus-visible,
+  .pane-tab:active {
+    outline: none;
+    box-shadow: none;
+  }
+
+  .modlist-pane-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--bg);
+    border-bottom: var(--border-subtle);
+    padding: 0;
+    margin: 0;
+  }
+
+  .modlist-pane {
+    margin: 0;
+    min-height: 240px;
+    border: var(--border-subtle);
+    background: var(--bg-surface);
+    padding: 24px;
+    box-sizing: border-box;
+    font-family: var(--font-ui);
+  }
+
+  .modlist-pane h3 {
+    margin: 0 0 12px;
+    color: var(--text);
+    letter-spacing: 1px;
+  }
+
+  .modlist-pane p {
+    margin: 0;
+    color: var(--interactive);
+    font-size: 18px;
+  }
+
+  .modlist-pane small {
+    display: inline-block;
+    margin-top: 10px;
+    color: var(--text-muted);
+  }
+
+  .mods-table {
+    border-top: var(--border-subtle);
+  }
+
+  .mods-table-head,
+  .mods-table-row {
+    display: grid;
+    grid-template-columns: 1fr 240px 180px;
+    gap: 16px;
+    padding: 10px 0;
+    border-bottom: var(--border-subtle);
+  }
+
+  .mods-table-head {
+    color: var(--text-muted);
+  }
+
+  .mods-empty-row {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .mods-col-date {
+    text-align: center;
+  }
+
+  .mods-col-status {
+    text-align: right;
+  }
+
+  .uncompress-btn {
+    border: 0;
+    border-radius: var(--border-radius);
+    padding: 4px 10px;
+    font-family: var(--font-ui);
+    cursor: pointer;
+    background: var(--interactive);
+    color: var(--btn-primary-text);
+  }
+
+  .uncompress-btn:hover {
+    opacity: 0.85;
+  }
+
+  .deploy-btn {
+    border: 0;
+    border-radius: var(--border-radius);
+    padding: 4px 10px;
+    font-family: var(--font-ui);
+    cursor: pointer;
+    background: var(--interactive);
+    color: var(--btn-primary-text);
+  }
+
+  .deploy-btn:hover {
+    opacity: 0.85;
   }
 
   .log-panel {
@@ -318,6 +789,7 @@
   }
 
   .log-panel.expanded {
+    max-height: 60vh;
     height: 60vh;
     border: var(--border-subtle);
     background: var(--bg);
@@ -365,6 +837,20 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .log-progress {
+    margin-top: 4px;
+    height: 6px;
+    width: 220px;
+    background: var(--ash);
+    overflow: hidden;
+  }
+
+  .log-progress-fill {
+    height: 100%;
+    background: var(--interactive);
+    transition: width 0.2s linear;
   }
 
   .time {

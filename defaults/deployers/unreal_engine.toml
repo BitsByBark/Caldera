@@ -1,0 +1,10 @@
+id = "unreal_engine"
+name = "Unreal Engine"
+description = "Generic deployer for Unreal Engine 4 and 5 games using the ~mods pak system."
+
+content_path_hint = "Content/Paks"
+mod_subfolder = "~mods"
+create_mod_folder = true
+file_patterns = ["*.pak", "*.utoc", "*.ucas"]
+group_by_basename = true
+load_order = "alphabetical"

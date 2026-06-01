@@ -10,7 +10,7 @@
   <div class="list-main" on:click={toggle}>
     <div class="list-left"><slot name="left" /></div>
     <div class="list-right"><slot name="right" /></div>
-    <div class="list-expand">{#if canExpand}{expanded ? '^' : 'v'}{/if}</div>
+    <div class="list-expand">{#if canExpand}{expanded ? '↑' : '↓'}{/if}</div>
   </div>
   {#if canExpand && expanded}
     <div class="list-details">

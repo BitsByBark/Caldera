@@ -62,6 +62,14 @@ behaviour "BEHAVIOUR" {
         desc    = "Path to your Steam installation. Leave empty to use the default."
     }
 
+    working_directory {
+        label   = "Working Directory"
+        type    = path
+        default = ""
+        hot     = false
+        desc    = "Optional CALDERA runtime root override. If set, cache/downloads/metadata are stored here."
+    }
+
     sort_order {
         label   = "Sort Order"
         type    = cycle ["name", "date", "size", "status"]

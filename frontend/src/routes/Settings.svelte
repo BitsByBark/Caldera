@@ -9,7 +9,7 @@
   import { parseBrk } from '../settings/settings.js';
   import { settings } from '../stores/settings.js';
   import { gameList } from '../stores/game.js';
-  import { getSteamGames } from '../lib/tauri.js';
+  import { getSettingsSchema, getSteamGames, setWorkingDirectory } from '../lib/tauri.js';
   import { showToast } from '../components/Toast.svelte';
 
   let groups = [];
@@ -31,10 +31,21 @@
   ];
 
   onMount(async () => {
-    const text = await fetch('/settings/caldera.brk').then((r) => r.text());
-    const parsed = parseBrk(text);
-    groups = parsed.groups;
-    activeGroupId = parsed.groups[0]?.id || '';
+    try {
+      const text = await getSettingsSchema();
+      const parsed = parseBrk(text);
+      groups = parsed.groups;
+      activeGroupId = parsed.groups[0]?.id || '';
+    } catch (err) {
+      showToast(`Failed to load settings schema: ${String(err)}`, 'error');
+    }
+
+    try {
+      const wd = get(settings).working_directory || '';
+      await setWorkingDirectory(wd || null);
+    } catch (err) {
+      showToast(`Working directory apply failed: ${String(err)}`, 'error');
+    }
   });
 
   async function scanSteam() {
@@ -53,6 +64,11 @@
 
   function updateSetting(key, value) {
     settings.update((s) => ({ ...s, [key]: value }));
+    if (key === 'working_directory') {
+      setWorkingDirectory(value || null).catch((err) => {
+        showToast(`Working directory apply failed: ${String(err)}`, 'error');
+      });
+    }
   }
 
   $: activeGroup = groups.find((g) => g.id === activeGroupId) || groups[0] || null;

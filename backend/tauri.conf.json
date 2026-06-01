@@ -18,12 +18,28 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/.config/caldera/**",
+          "$APPCONFIG/caldera/**",
+          "$APPDATA/caldera/**",
+          "$APPLOCALDATA/caldera/**",
+          "$HOME/.steam/**",
+          "$HOME/.local/share/Steam/**",
+          "$LOCALDATA/Steam/**",
+          "$APPDATA/Steam/**"
+        ]
+      }
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
+    "active": true,
+    "targets": ["deb", "rpm", "appimage", "msi", "nsis"],
+    "category": "Utility",
+    "shortDescription": "Cross-platform mod manager",
+    "longDescription": "CALDERA — Linux-first mod manager rivaling Vortex.",
     "icon": []
   }
 }

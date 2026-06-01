@@ -8,6 +8,7 @@ export const settings = writable({
     parallel_downloads: 4,
     metadata_cache: 'auto',
     steam_path: '',
+    working_directory: '',
     sort_order: 'date',
     default_game: 'none',
 })
