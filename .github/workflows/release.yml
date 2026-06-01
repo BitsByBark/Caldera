@@ -68,9 +68,69 @@ jobs:
           name: caldera-linux
           path: |
             backend/target/release/bundle/deb/*.deb
-            backend/target/release/bundle/rpm/*.rpm
             backend/target/release/bundle/appimage/*.AppImage
             backend/target/release/caldera
+
+  build-fedora-rpm:
+    name: Build Fedora RPM (fc43)
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:43
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          dnf -y install \
+            webkit2gtk4.1-devel \
+            gtk3-devel \
+            libayatana-appindicator-gtk3-devel \
+            librsvg2-devel \
+            libsoup3-devel \
+            javascriptcoregtk4.1-devel \
+            @development-tools \
+            rust \
+            cargo \
+            nodejs \
+            npm \
+            rpm-build \
+            curl \
+            wget \
+            file \
+            git
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: fedora43-cargo-${{ hashFiles('backend/Cargo.lock') }}
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Preflight icon checks (Linux)
+        run: |
+          ./scripts/check-icons.sh
+
+      - name: Build Tauri RPM (Fedora 43)
+        working-directory: backend
+        run: |
+          cargo install tauri-cli --version "^2.0" --locked
+          cargo tauri build --bundles rpm
+
+      - name: Upload Fedora RPM
+        uses: actions/upload-artifact@v4
+        with:
+          name: caldera-fedora-rpm
+          path: backend/target/release/bundle/rpm/*.rpm
 
   build-windows:
     name: Build Windows
@@ -125,7 +185,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-fedora-rpm, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -137,6 +197,12 @@ jobs:
         with:
           name: caldera-linux
           path: artifacts/linux
+
+      - name: Download Fedora RPM
+        uses: actions/download-artifact@v4
+        with:
+          name: caldera-fedora-rpm
+          path: artifacts/fedora
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
@@ -175,6 +241,7 @@ jobs:
             **Windows:** double-click the `.msi` or `.exe` installer.
           files: |
             artifacts/linux/**/*
+            artifacts/fedora/**/*
             artifacts/windows/**/*
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
