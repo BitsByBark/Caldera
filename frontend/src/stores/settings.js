@@ -11,4 +11,7 @@ export const settings = writable({
     working_directory: '',
     sort_order: 'date',
     default_game: 'none',
+    accounts: {
+        nexus_api_key: '',
+    },
 })

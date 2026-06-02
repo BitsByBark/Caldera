@@ -84,7 +84,7 @@ async fn queue_download(
         ),
     )
     .await?;
-    let download_links = fetch_nexus_json(
+    let download_links = fetch_optional_nexus_json(
         &client,
         &api_key,
         &format!(
@@ -179,6 +179,7 @@ fn nexus_api_key() -> Result<String, String> {
         .get("accounts")
         .and_then(|accounts| accounts.get("nexus_api_key"))
         .and_then(Value::as_str)
+        .or_else(|| values.get("nexus_api_key").and_then(Value::as_str))
         .map(str::trim)
         .filter(|key| !key.is_empty())
         .map(str::to_string)
@@ -203,6 +204,33 @@ async fn fetch_nexus_json(
             StatusCode::BAD_GATEWAY,
             format!("Nexus returned {} for {}", status.as_u16(), url),
         ));
+    }
+
+    response
+        .json::<Value>()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Invalid Nexus JSON: {}", e)))
+}
+
+async fn fetch_optional_nexus_json(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> Result<Value, (StatusCode, String)> {
+    let response = client
+        .get(url)
+        .header("apikey", api_key)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Nexus request failed: {}", e)))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Ok(json!({
+            "error": "nexus request failed",
+            "status": status.as_u16(),
+            "url": url
+        }));
     }
 
     response

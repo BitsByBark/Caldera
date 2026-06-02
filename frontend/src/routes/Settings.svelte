@@ -62,7 +62,18 @@
     }
   }
 
-  function updateSetting(key, value) {
+  function updateSetting(groupId, key, value) {
+    if (groupId === 'accounts') {
+      settings.update((s) => ({
+        ...s,
+        accounts: {
+          ...(s.accounts || {}),
+          [key]: value,
+        },
+      }));
+      return;
+    }
+
     settings.update((s) => ({ ...s, [key]: value }));
     if (key === 'working_directory') {
       setWorkingDirectory(value || null).catch((err) => {
@@ -113,7 +124,7 @@
                       label={entry.label}
                       stops={uiScaleStops}
                       value={$settings.ui_scale}
-                      onChange={(v) => updateSetting(entry.id, v)}
+                      onChange={(v) => updateSetting(activeGroup.id, entry.id, v)}
                     />
                     {#if entry.desc}
                       <div class="entry-desc">{entry.desc}</div>
@@ -125,7 +136,7 @@
                       label={entry.label}
                       stops={textScaleStops}
                       value={$settings.text_scale}
-                      onChange={(v) => updateSetting(entry.id, v)}
+                      onChange={(v) => updateSetting(activeGroup.id, entry.id, v)}
                     />
                     {#if entry.desc}
                       <div class="entry-desc">{entry.desc}</div>
@@ -134,8 +145,8 @@
                 {:else}
                   <SettingsListItem
                     entry={entry}
-                    value={$settings[entry.id] ?? entry.default}
-                    onChange={(v) => updateSetting(entry.id, v)}
+                    value={activeGroup.id === 'accounts' ? $settings.accounts?.[entry.id] ?? entry.default : $settings[entry.id] ?? entry.default}
+                    onChange={(v) => updateSetting(activeGroup.id, entry.id, v)}
                   />
 
                   {#if entry.id === 'steam_path'}

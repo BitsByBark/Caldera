@@ -86,3 +86,14 @@ behaviour "BEHAVIOUR" {
         desc    = "The game CALDERA opens to on launch."
     }
 }
+
+accounts "ACCOUNTS" {
+
+    nexus_api_key {
+        label   = "Nexus API Key"
+        type    = text
+        default = ""
+        hot     = false
+        desc    = "Personal Nexus Mods API key used for metadata lookups."
+    }
+}
