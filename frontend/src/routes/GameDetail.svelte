@@ -1,5 +1,5 @@
 <script>
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { push } from 'svelte-spa-router';
   import { invoke } from '@tauri-apps/api/core';
   import { get } from 'svelte/store';
@@ -30,6 +30,7 @@
   let logViewport;
   let activePaneTab = 'DOWNLOADED_MODS';
   let modlistRows = [];
+  let unlistenSessionLog = null;
   const leftTabs = [
     { id: 'DOWNLOADED_MODS', label: 'DOWNLOADED MODS' },
     { id: 'COLLECTIONS', label: 'COLLECTIONS' },
@@ -95,6 +96,25 @@
     );
   }
 
+  function mapModlistRows(listings) {
+    return (listings || []).map((row) => ({
+      modId: row.mod_id || 'unknown',
+      name: row.name || row.mod_id || 'Unknown Mod',
+      sourcePath: row.source_path || null,
+      added: formatAddedAt(row.added_at),
+      status: String(row.status || 'unknown').toUpperCase(),
+      progress: Number(row.progress || 0),
+      compressed: isCompressedFilename(row.name || row.mod_id || ''),
+      deployable: !!row.deployable,
+      deployerReason: row.deployer_reason || null,
+    }));
+  }
+
+  async function loadModlistRows() {
+    const listings = await invoke('get_modlist_listings', { appId: params.id });
+    modlistRows = mapModlistRows(listings);
+  }
+
   onMount(async () => {
     const steamPath = get(settings).steam_path || null;
 
@@ -129,21 +149,24 @@
     }
 
     try {
-      const listings = await invoke('get_modlist_listings', { appId: params.id });
-      modlistRows = (listings || []).map((row) => ({
-        modId: row.mod_id || 'unknown',
-        name: row.name || row.mod_id || 'Unknown Mod',
-        sourcePath: row.source_path || null,
-        added: formatAddedAt(row.added_at),
-        status: String(row.status || 'unknown').toUpperCase(),
-        compressed: isCompressedFilename(row.name || row.mod_id || ''),
-        deployable: !!row.deployable,
-        deployerReason: row.deployer_reason || null,
-      }));
+      await loadModlistRows();
     } catch (err) {
       addLog(`Failed to load modlist listings: ${String(err)}`, 'warning');
       modlistRows = [];
     }
+
+    unlistenSessionLog = sessionLog.subscribe((entries) => {
+      const last = entries[entries.length - 1];
+      if (
+        !last?.message?.startsWith('Download queued:')
+        && !last?.message?.startsWith('Download complete:')
+        && !last?.message?.startsWith('Download failed:')
+        && !last?.progressKey?.startsWith('download:')
+      ) return;
+      loadModlistRows().catch((err) => {
+        addLog(`Failed to refresh modlist listings: ${String(err)}`, 'warning');
+      });
+    });
 
     addLog('"CALDERA" initialised successfully', 'success');
     addLog(`Loading game: "${game?.name || gameConfig.name || params.id}"`, 'info');
@@ -208,17 +231,7 @@
     try {
       await invoke('uncompress_archive', { archivePath: row.sourcePath });
       addLog(`Uncompress complete: ${row.name}`, 'success');
-      const listings = await invoke('get_modlist_listings', { appId: params.id });
-      modlistRows = (listings || []).map((item) => ({
-        modId: item.mod_id || 'unknown',
-        name: item.name || item.mod_id || 'Unknown Mod',
-        sourcePath: item.source_path || null,
-        added: formatAddedAt(item.added_at),
-        status: String(item.status || 'unknown').toUpperCase(),
-        compressed: isCompressedFilename(item.name || item.mod_id || ''),
-        deployable: !!item.deployable,
-        deployerReason: item.deployer_reason || null,
-      }));
+      await loadModlistRows();
     } catch (err) {
       addLog(`Uncompress failed: ${String(err)}`, 'error');
     }
@@ -228,17 +241,7 @@
     try {
       await invoke('deploy_listing', { appId: params.id, listingId: row.modId });
       addLog(`Deployed listing: ${row.name}`, 'success');
-      const listings = await invoke('get_modlist_listings', { appId: params.id });
-      modlistRows = (listings || []).map((item) => ({
-        modId: item.mod_id || 'unknown',
-        name: item.name || item.mod_id || 'Unknown Mod',
-        sourcePath: item.source_path || null,
-        added: formatAddedAt(item.added_at),
-        status: String(item.status || 'unknown').toUpperCase(),
-        compressed: isCompressedFilename(item.name || item.mod_id || ''),
-        deployable: !!item.deployable,
-        deployerReason: item.deployer_reason || null,
-      }));
+      await loadModlistRows();
     } catch (err) {
       addLog(`Deploy failed: ${String(err)}`, 'error');
     }
@@ -250,6 +253,10 @@
       logViewport.scrollTop = logViewport.scrollHeight;
     }
   }
+
+  onDestroy(() => {
+    if (unlistenSessionLog) unlistenSessionLog();
+  });
 </script>
 
 <section class="page game-detail">
@@ -373,7 +380,14 @@
                 <div class="mods-col mods-col-name">{row.name}</div>
                 <div class="mods-col mods-col-date">{row.added}</div>
                 <div class="mods-col mods-col-status">
-                  {#if row.compressed}
+                  {#if row.status === 'DOWNLOADING'}
+                    <div class="download-progress">
+                      <div class="download-progress-label">{Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%</div>
+                      <div class="download-progress-track">
+                        <div class="download-progress-fill" style={`width:${Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%`}></div>
+                      </div>
+                    </div>
+                  {:else if row.compressed}
                     <button class="uncompress-btn" on:click={() => onUncompressRow(row)}>UNCOMPRESS</button>
                   {:else if isDeployableByExtension(row.name, row.sourcePath)}
                     <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
@@ -751,6 +765,31 @@
 
   .mods-col-status {
     text-align: right;
+  }
+
+  .download-progress {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .download-progress-label {
+    min-width: 34px;
+    color: var(--interactive);
+  }
+
+  .download-progress-track {
+    width: 90px;
+    height: 7px;
+    background: var(--ash);
+    overflow: hidden;
+  }
+
+  .download-progress-fill {
+    height: 100%;
+    background: var(--interactive);
+    transition: width 0.2s linear;
   }
 
   .uncompress-btn {

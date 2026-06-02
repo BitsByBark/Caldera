@@ -49,6 +49,7 @@
   onMount(() => {
     let unlistenSession;
     let unlistenOp;
+    let unlistenDownload;
 
     (async () => {
       try {
@@ -74,6 +75,11 @@
           const key = `${payload.operation}:${payload.target || 'unknown'}`;
           upsertProgressLog(key, payload.message || 'Uncompressing...', Number(payload.progress || 0), 'info');
         });
+        unlistenDownload = await listen('caldera://download-progress', (event) => {
+          const payload = event.payload || {};
+          const key = payload.key || `download:${payload.game_domain || 'unknown'}:${payload.mod_id || 'unknown'}:${payload.file_id || 'unknown'}`;
+          upsertProgressLog(key, payload.message || 'Downloading...', Number(payload.progress || 0), 'info');
+        });
       } catch (_e) {
         // Ignore event listener failures in non-tauri contexts.
       }
@@ -83,6 +89,7 @@
       if (saveTimer) clearTimeout(saveTimer);
       if (unlistenSession) unlistenSession();
       if (unlistenOp) unlistenOp();
+      if (unlistenDownload) unlistenDownload();
     };
   });
 </script>
