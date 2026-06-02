@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{ArtworkPaths, SteamGame};
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ManualGameEntry {
@@ -28,7 +28,11 @@ struct VdfParser<'a> {
 
 impl<'a> VdfParser<'a> {
     fn new(src: &'a str) -> Self {
-        Self { chars: src.chars().collect(), i: 0, _src: src }
+        Self {
+            chars: src.chars().collect(),
+            i: 0,
+            _src: src,
+        }
     }
 
     fn parse(mut self) -> Result<HashMap<String, VdfValue>, String> {
@@ -121,7 +125,10 @@ fn parse_vdf(text: &str) -> Result<HashMap<String, VdfValue>, String> {
     VdfParser::new(text).parse()
 }
 
-fn get_obj<'a>(map: &'a HashMap<String, VdfValue>, key: &str) -> Option<&'a HashMap<String, VdfValue>> {
+fn get_obj<'a>(
+    map: &'a HashMap<String, VdfValue>,
+    key: &str,
+) -> Option<&'a HashMap<String, VdfValue>> {
     match map.get(key) {
         Some(VdfValue::Obj(obj)) => Some(obj),
         _ => None,
@@ -183,10 +190,13 @@ fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), String> {
     let mods_dir = cache_root.join("mods");
     let profiles_dir = cache_root.join("profiles");
     let downloads_root = base_config_dir().join("downloads");
-    let downloads_dir = downloads_root.join(format!("{}-{}", slugify_name(&game.name), game.app_id));
-    let metadata_dir = base_config_dir()
-        .join("metadata")
-        .join(format!("{}-{}", slugify_name(&game.name), game.app_id));
+    let downloads_dir =
+        downloads_root.join(format!("{}-{}", slugify_name(&game.name), game.app_id));
+    let metadata_dir = base_config_dir().join("metadata").join(format!(
+        "{}-{}",
+        slugify_name(&game.name),
+        game.app_id
+    ));
 
     fs::create_dir_all(&artwork_dir)
         .map_err(|e| format!("failed creating cache artwork dir: {}", e))?;
@@ -211,8 +221,11 @@ fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), String> {
         "install_path": game.install_path
     });
     let meta_path = cache_root.join("meta.json");
-    fs::write(&meta_path, serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()))
-        .map_err(|e| format!("failed writing meta.json: {}", e))?;
+    fs::write(
+        &meta_path,
+        serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()),
+    )
+    .map_err(|e| format!("failed writing meta.json: {}", e))?;
 
     Ok(())
 }
@@ -245,8 +258,13 @@ fn load_manual_games() -> Result<Vec<SteamGame>, String> {
 fn save_manual_games(games: &[SteamGame]) -> Result<(), String> {
     let path = manual_games_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating manual games dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed creating manual games dir {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
 
     let entries: Vec<ManualGameEntry> = games
@@ -269,7 +287,11 @@ fn save_manual_games(games: &[SteamGame]) -> Result<(), String> {
 fn default_steam_root() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let p = PathBuf::from(home).join(".steam").join("steam");
-    if p.exists() { Some(p) } else { None }
+    if p.exists() {
+        Some(p)
+    } else {
+        None
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -467,13 +489,16 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
 }
 
 pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths {
-    let caldera_artwork = base_config_dir().join("cache").join(&app_id).join("artwork");
+    let caldera_artwork = base_config_dir()
+        .join("cache")
+        .join(&app_id)
+        .join("artwork");
     let cached_banner = caldera_artwork.join("banner.jpg");
     let cached_hero = caldera_artwork.join("hero.jpg");
     let cached_logo = caldera_artwork.join("logo.png");
 
-    let steam_cache = resolve_steam_root(steam_path)
-        .map(|root| root.join("appcache").join("librarycache"));
+    let steam_cache =
+        resolve_steam_root(steam_path).map(|root| root.join("appcache").join("librarycache"));
 
     let steam_banner = steam_cache
         .as_ref()
@@ -558,9 +583,7 @@ pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(
     let steam_root = if is_manual {
         None
     } else {
-        Some(resolve_steam_root(steam_path.clone()).ok_or_else(|| {
-            steam_path_required_message()
-        })?)
+        Some(resolve_steam_root(steam_path.clone()).ok_or_else(|| steam_path_required_message())?)
     };
 
     let game_meta = get_steam_games(steam_path)?

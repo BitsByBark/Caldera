@@ -194,8 +194,13 @@ fn load_manifest(app_id: &str, mod_id: &str) -> Result<Option<ModManifest>, Stri
 fn save_manifest(app_id: &str, mod_id: &str, manifest: &ModManifest) -> Result<(), String> {
     let p = manifest_path(app_id, mod_id);
     if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating mod storage dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed creating mod storage dir {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
     let body = serde_json::to_string_pretty(manifest)
         .map_err(|e| format!("Failed serializing manifest: {}", e))?;
@@ -226,8 +231,13 @@ pub fn read_game_cache_config(app_id: &str) -> Result<toml::Value, String> {
 pub fn write_game_cache_config(app_id: &str, cfg: &toml::Value) -> Result<(), String> {
     let p = game_cache_config_path(app_id);
     if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating cache config dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed creating cache config dir {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
     let body = toml::to_string(cfg).map_err(|e| format!("Failed serializing TOML: {}", e))?;
     fs::write(&p, body).map_err(|e| format!("Failed writing cache config {}: {}", p.display(), e))
@@ -240,9 +250,7 @@ pub fn get_deployer_override_path(app_id: &str) -> Result<Option<PathBuf>, Strin
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string());
 
-    Ok(val
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from))
+    Ok(val.filter(|s| !s.is_empty()).map(PathBuf::from))
 }
 
 fn get_selected_deployer(app_id: &str) -> Result<Option<String>, String> {
@@ -583,8 +591,13 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
     };
 
     if cfg.create_mod_folder {
-        fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("Failed creating target mod dir {}: {}", target_dir.display(), e))?;
+        fs::create_dir_all(&target_dir).map_err(|e| {
+            format!(
+                "Failed creating target mod dir {}: {}",
+                target_dir.display(),
+                e
+            )
+        })?;
     }
 
     logger.info(&format!("Deploying to {}", target_dir.display()));
@@ -607,8 +620,14 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
             continue;
         }
 
-        fs::copy(&src, &target)
-            .map_err(|e| format!("Failed copying {} to {}: {}", src.display(), target.display(), e))?;
+        fs::copy(&src, &target).map_err(|e| {
+            format!(
+                "Failed copying {} to {}: {}",
+                src.display(),
+                target.display(),
+                e
+            )
+        })?;
 
         copied_count += 1;
         logger.success(&format!("Copied {}", name));
@@ -629,7 +648,10 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
 
     save_manifest(&app_id, &mod_id, &manifest)?;
     update_registry_from_manifest(&app_id, &mod_id, &manifest)?;
-    logger.success(&format!("Deployment complete — {} files copied", copied_count));
+    logger.success(&format!(
+        "Deployment complete — {} files copied",
+        copied_count
+    ));
 
     Ok(manifest)
 }
@@ -819,8 +841,13 @@ pub fn deploy_listing(
 
     let mod_id = listing.mod_id.clone();
     let mod_dir = mod_storage_dir(&app_id, &mod_id);
-    fs::create_dir_all(&mod_dir)
-        .map_err(|e| format!("Failed creating mod staging dir {}: {}", mod_dir.display(), e))?;
+    fs::create_dir_all(&mod_dir).map_err(|e| {
+        format!(
+            "Failed creating mod staging dir {}: {}",
+            mod_dir.display(),
+            e
+        )
+    })?;
 
     let mut copied = 0usize;
     let mut seen = HashSet::new();

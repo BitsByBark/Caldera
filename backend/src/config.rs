@@ -3,13 +3,16 @@ use std::{fs, path::Path};
 
 use crate::GameConfig;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 fn base_config_dir() -> PathBuf {
     crate::runtime::base_config_dir()
 }
 
 fn game_config_path(game_id: &str) -> PathBuf {
-    base_config_dir().join("games").join(format!("{}.toml", game_id))
+    base_config_dir()
+        .join("games")
+        .join(format!("{}.toml", game_id))
 }
 
 pub fn get_game_config_stub(game_id: String) -> GameConfig {
@@ -95,6 +98,128 @@ fn slugify_name(name: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
+}
+
+fn nexus_domain_for_name(name: &str) -> String {
+    name.chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
+}
+
+fn value_string(value: &Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(str::to_string)
+}
+
+fn value_number(value: &Value, path: &[&str]) -> Option<f64> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_f64()
+}
+
+fn selected_file<'a>(metadata: &'a Value, file_id: &str) -> Option<&'a Value> {
+    metadata
+        .get("files")
+        .and_then(|files| files.get("files"))
+        .and_then(Value::as_array)
+        .and_then(|files| {
+            files.iter().find(|file| {
+                file.get("file_id")
+                    .and_then(Value::as_i64)
+                    .map(|id| id.to_string() == file_id)
+                    .unwrap_or(false)
+            })
+        })
+}
+
+fn collect_queued_nexus_listings(game_name: &str, out: &mut Vec<ModListing>) -> Result<(), String> {
+    let domain = nexus_domain_for_name(game_name);
+    if domain.is_empty() {
+        return Ok(());
+    }
+
+    let root = base_config_dir().join("cache").join(&domain);
+    if !root.exists() || !root.is_dir() {
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(&root)
+        .map_err(|e| format!("Failed reading Nexus cache dir {}: {}", root.display(), e))?;
+    for entry in entries.flatten() {
+        let meta_path = entry.path().join("meta.json");
+        if !meta_path.is_file() {
+            continue;
+        }
+
+        let raw = match fs::read_to_string(&meta_path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let metadata = match serde_json::from_str::<Value>(&raw) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+
+        let mod_id = value_number(&metadata, &["mod", "mod_id"])
+            .map(|id| id.trunc().to_string())
+            .or_else(|| entry.file_name().to_str().map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        let file_id = value_string(&metadata, &["download", "file_id"]);
+        let file = file_id
+            .as_deref()
+            .and_then(|id| selected_file(&metadata, id));
+        let name = file
+            .and_then(|f| value_string(f, &["file_name"]))
+            .or_else(|| file.and_then(|f| value_string(f, &["name"])))
+            .or_else(|| value_string(&metadata, &["mod", "name"]))
+            .unwrap_or_else(|| format!("Nexus mod {}", mod_id));
+
+        out.push(ModListing {
+            mod_id: format!(
+                "nexus-{}-{}-{}",
+                domain,
+                mod_id,
+                file_id.clone().unwrap_or_else(|| "unknown".to_string())
+            ),
+            name,
+            status: "downloading".to_string(),
+            source_path: Some(meta_path.to_string_lossy().to_string()),
+            deployable: false,
+            deployer_reason: Some("Download still in progress".to_string()),
+            added_at: value_string(&metadata, &["download", "queued_at"]),
+            progress: Some(0.0),
+            speed: None,
+            version: file
+                .and_then(|f| value_string(f, &["version"]))
+                .or_else(|| value_string(&metadata, &["mod", "version"])),
+            author: value_string(&metadata, &["mod", "author"])
+                .or_else(|| value_string(&metadata, &["mod", "uploaded_by"])),
+            description: file
+                .and_then(|f| value_string(f, &["description"]))
+                .or_else(|| value_string(&metadata, &["mod", "description"])),
+            summary: value_string(&metadata, &["mod", "summary"]),
+            source: Some("nexus".to_string()),
+            source_url: value_string(&metadata, &["download", "url"]),
+            nexus_mod_id: value_number(&metadata, &["mod", "mod_id"]),
+            nexus_file_id: file_id.and_then(|id| id.parse::<f64>().ok()),
+            categories: Vec::new(),
+            tags: Vec::new(),
+            file_size: file.and_then(|f| value_number(f, &["size_in_bytes"])),
+            file_count: None,
+            file_types: Vec::new(),
+            user_notes: None,
+            favorite: None,
+            files: Vec::new(),
+        });
+    }
+
+    Ok(())
 }
 
 fn listing_roots(game_name: &str, app_id: &str) -> Vec<PathBuf> {
@@ -188,6 +313,7 @@ pub fn get_raw_modlist_listings(app_id: String) -> Result<Vec<ModListing>, Strin
     for root in listing_roots(&meta.name, &app_id) {
         maybe_collect_from_dir(&root, &mut out)?;
     }
+    collect_queued_nexus_listings(&meta.name, &mut out)?;
     out.sort_by(|a, b| b.added_at.cmp(&a.added_at));
     Ok(out)
 }
@@ -208,20 +334,10 @@ fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool),
         return Ok(("UNKNOWN".to_string(), false));
     }
 
-    let raw = fs::read_to_string(&manifest_path).map_err(|e| {
-        format!(
-            "Failed reading manifest {}: {}",
-            manifest_path.display(),
-            e
-        )
-    })?;
-    let manifest: ManifestView = serde_json::from_str(&raw).map_err(|e| {
-        format!(
-            "Invalid manifest JSON {}: {}",
-            manifest_path.display(),
-            e
-        )
-    })?;
+    let raw = fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Failed reading manifest {}: {}", manifest_path.display(), e))?;
+    let manifest: ManifestView = serde_json::from_str(&raw)
+        .map_err(|e| format!("Invalid manifest JSON {}: {}", manifest_path.display(), e))?;
 
     if manifest.files.is_empty() {
         return Ok(("UNKNOWN".to_string(), false));
@@ -260,20 +376,10 @@ pub fn get_profile_modlist(app_id: String) -> Result<Vec<ProfileModRow>, String>
         return Ok(Vec::new());
     }
 
-    let raw = fs::read_to_string(&profile_path).map_err(|e| {
-        format!(
-            "Failed reading profile {}: {}",
-            profile_path.display(),
-            e
-        )
-    })?;
-    let profile = crate::profile_format::parse_profile(&raw).map_err(|e| {
-        format!(
-            "Failed parsing profile {}: {}",
-            profile_path.display(),
-            e
-        )
-    })?;
+    let raw = fs::read_to_string(&profile_path)
+        .map_err(|e| format!("Failed reading profile {}: {}", profile_path.display(), e))?;
+    let profile = crate::profile_format::parse_profile(&raw)
+        .map_err(|e| format!("Failed parsing profile {}: {}", profile_path.display(), e))?;
 
     let mut rows = Vec::with_capacity(profile.modlist.len());
     for entry in profile.modlist {
@@ -294,19 +400,9 @@ pub fn profile_contains_mod(app_id: &str, mod_id: &str) -> Result<bool, String> 
     if !profile_path.exists() {
         return Ok(false);
     }
-    let raw = fs::read_to_string(&profile_path).map_err(|e| {
-        format!(
-            "Failed reading profile {}: {}",
-            profile_path.display(),
-            e
-        )
-    })?;
-    let profile = crate::profile_format::parse_profile(&raw).map_err(|e| {
-        format!(
-            "Failed parsing profile {}: {}",
-            profile_path.display(),
-            e
-        )
-    })?;
+    let raw = fs::read_to_string(&profile_path)
+        .map_err(|e| format!("Failed reading profile {}: {}", profile_path.display(), e))?;
+    let profile = crate::profile_format::parse_profile(&raw)
+        .map_err(|e| format!("Failed parsing profile {}: {}", profile_path.display(), e))?;
     Ok(profile.modlist.iter().any(|m| m.id == mod_id))
 }

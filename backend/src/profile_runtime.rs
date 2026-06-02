@@ -6,7 +6,9 @@ use time::OffsetDateTime;
 
 use crate::config::ModListing;
 use crate::deployer::ModManifest;
-use crate::profile_format::{serialize_profile, CalderaProfile, ConflictRule, ModEntry, ProfileMeta};
+use crate::profile_format::{
+    serialize_profile, CalderaProfile, ConflictRule, ModEntry, ProfileMeta,
+};
 
 fn slugify_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -118,7 +120,9 @@ pub fn upsert_profile_from_deploy(
     let mut merged_user_notes = listing.user_notes.clone();
     let deploy_meta_note = deploy_note(manifest);
     merged_user_notes = Some(match merged_user_notes {
-        Some(existing) if !existing.trim().is_empty() => format!("{}\n{}", existing, deploy_meta_note),
+        Some(existing) if !existing.trim().is_empty() => {
+            format!("{}\n{}", existing, deploy_meta_note)
+        }
         _ => deploy_meta_note,
     });
 
@@ -129,11 +133,17 @@ pub fn upsert_profile_from_deploy(
         } else {
             listing.name.clone()
         },
-        version: listing.version.clone().unwrap_or_else(|| "unknown".to_string()),
+        version: listing
+            .version
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string()),
         author: listing.author.clone(),
         description: listing.description.clone(),
         summary: listing.summary.clone(),
-        source: listing.source.clone().unwrap_or_else(|| "local".to_string()),
+        source: listing
+            .source
+            .clone()
+            .unwrap_or_else(|| "local".to_string()),
         source_url: listing.source_url.clone(),
         nexus_mod_id: listing.nexus_mod_id,
         nexus_file_id: listing.nexus_file_id,

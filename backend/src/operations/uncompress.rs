@@ -23,7 +23,10 @@ fn sanitize_zip_path(name: &str) -> PathBuf {
     out
 }
 
-pub fn uncompress_with_progress<F>(archive_path: String, mut on_progress: F) -> Result<Vec<String>, String>
+pub fn uncompress_with_progress<F>(
+    archive_path: String,
+    mut on_progress: F,
+) -> Result<Vec<String>, String>
 where
     F: FnMut(u8),
 {

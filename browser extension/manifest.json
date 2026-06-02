@@ -15,20 +15,19 @@
       "matches": ["https://www.nexusmods.com/*/mods/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dev.js"],
+      "run_at": "document_start"
     }
   ],
   "background": {
-    "scripts": ["background.js"]
+    "service_worker": "background.js"
   },
   "icons": {
     "16": "icon16.png",
     "48": "icon48.png",
     "128": "icon128.png"
-  },
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "caldera@madebybark.com",
-      "strict_min_version": "109.0"
-    }
   }
 }

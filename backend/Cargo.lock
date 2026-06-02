@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "caldera-backend"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "axum",
  "dirs 5.0.1",

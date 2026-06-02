@@ -216,7 +216,9 @@ impl Lexer {
                 ident.push(c);
                 // Accept '-' in identifiers for runtime compatibility with file-stem mod ids
                 // (e.g. "my-mod-123"), even though canonical serialization should prefer snake_case.
-                ident.push_str(&self.read_while(|x| x.is_ascii_alphanumeric() || x == '_' || x == '-'));
+                ident.push_str(
+                    &self.read_while(|x| x.is_ascii_alphanumeric() || x == '_' || x == '-'),
+                );
                 match ident.as_str() {
                     "true" => Ok(Token::Bool(true)),
                     "false" => Ok(Token::Bool(false)),
@@ -311,7 +313,10 @@ fn value_as_string(v: Option<&Value>, ctx: &str, required: bool) -> Result<Optio
     match v {
         Some(Value::Str(s)) => Ok(Some(s.clone())),
         Some(Value::Ident(s)) => Ok(Some(s.clone())),
-        Some(other) => Err(format!("{} expected string/identifier, got {:?}", ctx, other)),
+        Some(other) => Err(format!(
+            "{} expected string/identifier, got {:?}",
+            ctx, other
+        )),
         None if required => Err(format!("{} missing required field", ctx)),
         None => Ok(None),
     }
@@ -435,7 +440,9 @@ pub fn parse_profile(text: &str) -> Result<CalderaProfile, String> {
         || !top.contains(&"modlist".to_string())
         || !top.contains(&"conflicts".to_string())
     {
-        return Err("profile file must contain top-level blocks: profile, modlist, conflicts".to_string());
+        return Err(
+            "profile file must contain top-level blocks: profile, modlist, conflicts".to_string(),
+        );
     }
 
     let pf = profile_fields.ok_or_else(|| "missing top-level profile block".to_string())?;
@@ -479,14 +486,30 @@ pub fn parse_profile(text: &str) -> Result<CalderaProfile, String> {
                 &format!("modlist.{}.source_url", id),
                 false,
             )?,
-            nexus_mod_id: value_as_num(get("nexus_mod_id"), &format!("modlist.{}.nexus_mod_id", id))?,
-            nexus_file_id: value_as_num(get("nexus_file_id"), &format!("modlist.{}.nexus_file_id", id))?,
-            categories: value_as_string_array(get("categories"), &format!("modlist.{}.categories", id))?,
+            nexus_mod_id: value_as_num(
+                get("nexus_mod_id"),
+                &format!("modlist.{}.nexus_mod_id", id),
+            )?,
+            nexus_file_id: value_as_num(
+                get("nexus_file_id"),
+                &format!("modlist.{}.nexus_file_id", id),
+            )?,
+            categories: value_as_string_array(
+                get("categories"),
+                &format!("modlist.{}.categories", id),
+            )?,
             tags: value_as_string_array(get("tags"), &format!("modlist.{}.tags", id))?,
             file_size: value_as_num(get("file_size"), &format!("modlist.{}.file_size", id))?,
             file_count: value_as_num(get("file_count"), &format!("modlist.{}.file_count", id))?,
-            file_types: value_as_string_array(get("file_types"), &format!("modlist.{}.file_types", id))?,
-            user_notes: value_as_string(get("user_notes"), &format!("modlist.{}.user_notes", id), false)?,
+            file_types: value_as_string_array(
+                get("file_types"),
+                &format!("modlist.{}.file_types", id),
+            )?,
+            user_notes: value_as_string(
+                get("user_notes"),
+                &format!("modlist.{}.user_notes", id),
+                false,
+            )?,
             favorite: value_as_bool(get("favorite"), &format!("modlist.{}.favorite", id))?,
         });
     }
@@ -501,7 +524,10 @@ pub fn parse_profile(text: &str) -> Result<CalderaProfile, String> {
         }
         let winner = value_as_string(get("winner"), &format!("conflicts.{}.winner", id), false)?;
         if rule == "use" && winner.is_none() {
-            return Err(format!("conflicts.{}.winner required when rule = \"use\"", id));
+            return Err(format!(
+                "conflicts.{}.winner required when rule = \"use\"",
+                id
+            ));
         }
         conflicts.push(ConflictRule {
             id: id.clone(),
@@ -525,11 +551,17 @@ pub fn serialize_profile(profile: &CalderaProfile) -> String {
     out.push_str("profile {\n");
     out.push_str(&format!("    name = {}\n", q(&profile.profile.name)));
     out.push_str(&format!("    created = {}\n", q(&profile.profile.created)));
-    out.push_str(&format!("    modified = {}\n", q(&profile.profile.modified)));
+    out.push_str(&format!(
+        "    modified = {}\n",
+        q(&profile.profile.modified)
+    ));
     if let Some(description) = &profile.profile.description {
         out.push_str(&format!("    description = {}\n", q(description)));
     }
-    out.push_str(&format!("    deployer = {}\n", q(&profile.profile.deployer)));
+    out.push_str(&format!(
+        "    deployer = {}\n",
+        q(&profile.profile.deployer)
+    ));
     out.push_str("}\n\n");
 
     out.push_str("modlist {\n");
@@ -569,7 +601,10 @@ pub fn serialize_profile(profile: &CalderaProfile) -> String {
             out.push_str(&format!("        user_notes = {}\n", q(v)));
         }
         if let Some(v) = entry.favorite {
-            out.push_str(&format!("        favorite = {}\n", if v { "true" } else { "false" }));
+            out.push_str(&format!(
+                "        favorite = {}\n",
+                if v { "true" } else { "false" }
+            ));
         }
         out.push_str("    }\n");
         out.push('\n');

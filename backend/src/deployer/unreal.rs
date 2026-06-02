@@ -1,9 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{
-    get_deployer_override_path, read_game_meta, DeployLogger, DeployerConfig,
-};
+use super::{get_deployer_override_path, read_game_meta, DeployLogger, DeployerConfig};
 
 pub fn resolve_unreal_mod_path(
     app_id: &str,
@@ -26,14 +24,22 @@ pub fn resolve_unreal_mod_path(
     let install_root = PathBuf::from(meta.install_path);
     if !install_root.exists() {
         logger.warning("Could not locate Content/Paks — set path manually in setup");
-        return Err(format!("Install root does not exist: {}", install_root.display()));
+        return Err(format!(
+            "Install root does not exist: {}",
+            install_root.display()
+        ));
     }
 
     let hint = Path::new(&cfg.content_path_hint);
     let mut found_content: Option<PathBuf> = None;
 
-    let entries = fs::read_dir(&install_root)
-        .map_err(|e| format!("Failed reading install root {}: {}", install_root.display(), e))?;
+    let entries = fs::read_dir(&install_root).map_err(|e| {
+        format!(
+            "Failed reading install root {}: {}",
+            install_root.display(),
+            e
+        )
+    })?;
 
     for entry in entries.flatten() {
         let p = entry.path();
@@ -49,7 +55,9 @@ pub fn resolve_unreal_mod_path(
 
     let Some(content_path) = found_content else {
         logger.warning("Could not locate Content/Paks — set path manually in setup");
-        return Err("Could not locate Content/Paks. Set deployer_mod_path manually in setup.".to_string());
+        return Err(
+            "Could not locate Content/Paks. Set deployer_mod_path manually in setup.".to_string(),
+        );
     };
 
     logger.success(&format!("Found content path: {}", content_path.display()));

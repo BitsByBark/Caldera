@@ -70,20 +70,24 @@ function injectButtons() {
       const parsedFileUrl = new URL(fileUrl)
       const fileId = parsedFileUrl.searchParams.get('file_id') || parsedFileUrl.searchParams.get('id') || null
 
-      chrome.runtime.sendMessage({
+      console.log('CALDERA sending download request', { fileUrl, gameDomain, modId, fileId })
+
+      browser.runtime.sendMessage({
         type: 'CALDERA_DOWNLOAD',
         url: btn.href,
         game_domain: gameDomain,
         mod_id: modId,
         file_id: fileId
-      }, (response) => {
-        const error = chrome.runtime.lastError?.message || response?.error || 'download request failed'
-
+      }).then((response) => {
         if (response?.success) {
           setLog('CALDERA queued download')
         } else {
+          const error = response?.error || 'download request failed'
           setLog(error)
         }
+      }).catch((err) => {
+        console.error('CALDERA message error:', err)
+        setLog(err.message)
       })
     })
 
