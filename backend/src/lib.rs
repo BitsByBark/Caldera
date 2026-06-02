@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod config;
 pub mod deployer;
+pub mod download;
 pub mod operations;
 pub mod profile_format;
 pub mod profile_runtime;

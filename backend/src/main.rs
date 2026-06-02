@@ -160,6 +160,15 @@ fn deploy_listing(
 
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            let app = app.handle().clone();
+            tauri::async_runtime::spawn(async {
+                if let Err(err) = caldera_backend::download::run_server(app).await {
+                    eprintln!("CALDERA download server error: {}", err);
+                }
+            });
+            Ok(())
+        })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![

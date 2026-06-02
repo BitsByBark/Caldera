@@ -16,3 +16,6 @@ toml = "0.8"
 dirs = "5"
 time = { version = "0.3", features = ["formatting"] }
 zip = "2"
+axum = "0.7"
+reqwest = { version = "0.13", features = ["json"] }
+tokio = { version = "1", features = ["net"] }
