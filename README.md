@@ -16,7 +16,7 @@
 
 # CALDERA
 
-mod manager built out of frustration. the popular one doesnt run on linux. the one that does locks parallel downloads behind a subscription. neither of those are acceptable.
+mod manager built out of frustration. the popular one doesnt run on linux. we have gone too long that is not acceptable.
 
 linux-first. windows supported. no account, no paywall, no electron.
 
