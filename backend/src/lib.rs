@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub mod config;
 pub mod deployer;
 pub mod download;
+pub mod nxm;
 pub mod operations;
 pub mod profile_format;
 pub mod profile_runtime;
@@ -101,11 +102,7 @@ pub fn deploy_mod(
     deployer::deploy_mod(app, app_id, mod_id)
 }
 
-pub fn undeploy_mod(
-    app: &tauri::AppHandle,
-    app_id: String,
-    mod_id: String,
-) -> Result<(), String> {
+pub fn undeploy_mod(app: &tauri::AppHandle, app_id: String, mod_id: String) -> Result<(), String> {
     deployer::undeploy_mod(app, app_id, mod_id)
 }
 
@@ -130,7 +127,9 @@ pub fn toggle_profile_mod(
     deployer::toggle_mod(app, app_id, mod_id, enabled)
 }
 
-pub fn get_available_deployers(app: &tauri::AppHandle) -> Result<Vec<deployer::DeployerOption>, String> {
+pub fn get_available_deployers(
+    app: &tauri::AppHandle,
+) -> Result<Vec<deployer::DeployerOption>, String> {
     deployer::get_available_deployers(app)
 }
 

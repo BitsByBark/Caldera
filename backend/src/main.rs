@@ -1,5 +1,9 @@
-use caldera_backend::{deployer::{DeployerOption, ModManifest}, ArtworkPaths, GameConfig, SteamGame};
+use caldera_backend::{
+    deployer::{DeployerOption, ModManifest},
+    ArtworkPaths, GameConfig, SteamGame,
+};
 use tauri::Emitter;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 #[derive(Clone, serde::Serialize)]
 struct OperationProgressEvent {
@@ -60,12 +64,17 @@ fn save_game_config(game_id: String, config: GameConfig) {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn get_modlist_listings(app: tauri::AppHandle, app_id: String) -> Result<Vec<caldera_backend::config::ModListing>, String> {
+fn get_modlist_listings(
+    app: tauri::AppHandle,
+    app_id: String,
+) -> Result<Vec<caldera_backend::config::ModListing>, String> {
     caldera_backend::get_modlist_listings(&app, app_id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn get_profile_modlist(app_id: String) -> Result<Vec<caldera_backend::config::ProfileModRow>, String> {
+fn get_profile_modlist(
+    app_id: String,
+) -> Result<Vec<caldera_backend::config::ProfileModRow>, String> {
     caldera_backend::get_profile_modlist(app_id)
 }
 
@@ -79,7 +88,11 @@ fn resolve_deployer_path(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn deploy_mod(app: tauri::AppHandle, app_id: String, mod_id: String) -> Result<ModManifest, String> {
+fn deploy_mod(
+    app: tauri::AppHandle,
+    app_id: String,
+    mod_id: String,
+) -> Result<ModManifest, String> {
     caldera_backend::deploy_mod(&app, app_id, mod_id)
 }
 
@@ -142,9 +155,10 @@ fn uncompress_archive(app: tauri::AppHandle, archive_path: String) -> Result<Vec
         );
     };
     emit(0, format!("Uncompressing {}", archive_path));
-    let result = caldera_backend::operations::uncompress::uncompress_with_progress(archive_path, |p| {
-        emit(p, format!("Uncompressing... {}%", p));
-    })?;
+    let result =
+        caldera_backend::operations::uncompress::uncompress_with_progress(archive_path, |p| {
+            emit(p, format!("Uncompressing... {}%", p));
+        })?;
     emit(100, "Uncompress complete".to_string());
     Ok(result)
 }
@@ -158,12 +172,53 @@ fn deploy_listing(
     caldera_backend::deploy_listing(&app, app_id, listing_id)
 }
 
+#[tauri::command(rename_all = "camelCase")]
+async fn handle_nxm_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    caldera_backend::nxm::handle_nxm_link(app, url).await
+}
+
+fn handle_nxm_arg(app: &tauri::AppHandle, arg: &str) {
+    if !arg.starts_with("nxm://") {
+        return;
+    }
+
+    let app = app.clone();
+    let url = arg.to_string();
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = caldera_backend::nxm::handle_nxm_link(app.clone(), url).await {
+            let _ = app.emit(
+                "caldera://session-log",
+                serde_json::json!({
+                    "message": err,
+                    "level": "error"
+                }),
+            );
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            for arg in argv {
+                handle_nxm_arg(&app, &arg);
+            }
+        }))
         .setup(|app| {
             let app = app.handle().clone();
+            for arg in std::env::args() {
+                handle_nxm_arg(&app, &arg);
+            }
+            let deep_link_app = app.clone();
+            app.deep_link().on_open_url(move |event| {
+                let app = deep_link_app.clone();
+                for url in event.urls() {
+                    handle_nxm_arg(&app, url.as_str());
+                }
+            });
+            let download_app = app.clone();
             tauri::async_runtime::spawn(async {
-                if let Err(err) = caldera_backend::download::run_server(app).await {
+                if let Err(err) = caldera_backend::download::run_server(download_app).await {
                     eprintln!("CALDERA download server error: {}", err);
                 }
             });
@@ -171,6 +226,7 @@ fn main() {
         })
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             get_steam_games,
             add_manual_game,
@@ -193,7 +249,8 @@ fn main() {
             get_configured_deployer,
             set_game_deployer,
             uncompress_archive,
-            deploy_listing
+            deploy_listing,
+            handle_nxm_link
         ])
         .run(tauri::generate_context!())
         .expect("failed to run CALDERA Tauri app");
