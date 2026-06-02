@@ -22,6 +22,8 @@ linux-first. windows supported. no account, no paywall, no electron.
 
 they not like us. and neither is this.
 
+also if you wanna look into it, find out the meaning of the project out there.
+
 ---
 
 ## Why CALDERA
