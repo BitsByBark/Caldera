@@ -37,7 +37,7 @@ pub async fn run_server(app: AppHandle) -> Result<(), String> {
     let app = Router::new()
         .route("/download", post(handle_download))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:7337")
+    let listener = tokio::net::TcpListener::bind("127.69.67.21:7337")
         .await
         .map_err(|e| format!("Failed binding download server: {}", e))?;
 

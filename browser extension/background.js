@@ -1,7 +1,7 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type !== 'CALDERA_DOWNLOAD') return
 
-  fetch('http://localhost:7337/download', {
+  fetch('http://127.69.67.21:7337/download', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
