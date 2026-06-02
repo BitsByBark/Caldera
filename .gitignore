@@ -10,3 +10,6 @@ frontend/node_modules/
 
 # OS noise
 .DS_Store
+
+# Local agent context
+CALDERA_CONTEXT.md
