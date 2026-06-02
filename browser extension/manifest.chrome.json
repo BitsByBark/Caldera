@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "CALDERA",
+  "version": "0.1.0",
+  "description": "Send Nexus Mods downloads to CALDERA",
+  "permissions": ["scripting", "activeTab"],
+  "host_permissions": [
+    "https://www.nexusmods.com/*",
+    "http://localhost:7337/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.nexusmods.com/*/mods/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
