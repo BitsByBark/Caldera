@@ -1,145 +1,208 @@
 <p align="center">
-  <img src="caldera_logo.svg" alt="CALDERA" width="160" />
+  <img src="caldera_logo.svg" alt="CALDERA" width="400">
 </p>
+
+<p align="center">
+  <a href="https://github.com/BitsByBark/Caldera/actions/workflows/release.yml">
+    <img src="https://github.com/BitsByBark/Caldera/actions/workflows/release.yml/badge.svg" alt="Build Status">
+  </a>
+  <a href="https://github.com/BitsByBark/Caldera/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="License: GPL-3.0">
+  </a>
+  <img src="https://img.shields.io/badge/status-pre--alpha-orange.svg" alt="Pre-alpha">
+</p>
+
+> ⚠️ **pre-alpha. things will break, features are missing, builds may be incompatible with each other.**
 
 # CALDERA
 
-Cross-platform mod manager. Linux-first, Windows supported.
+mod manager built out of frustration. the popular one doesnt run on linux. the one that does locks parallel downloads behind a subscription. neither of those are acceptable.
 
-Built with Tauri 2 (Rust backend, Svelte frontend). Aims to be a Vortex-class mod manager that treats Linux as a primary target — not an afterthought.
+linux-first. windows supported. no account, no paywall, no electron.
+
+they not like us. and neither is this.
+
+---
+
+## Why CALDERA
+
+- **linux-first** - not a wine port or a "we're working on it". runs natively
+- **no paywalls** - parallel downloads, collections, profiles, all free
+- **deployer system** - per-game TOML configs that define exactly where mod files go. write your own without recompiling anything
+- **registry-based tracking** - every deployed file is logged. enable/disable by rename, state survives crashes
+- **REBELLION theme** - ships with a full theme out of the box, more coming
+- **actually lightweight** - tauri + native webview, not a chromium wrapper
 
 ---
 
 ## Install
 
-Grab the latest build from the [Releases page](../../releases).
+latest builds on the [Releases page](https://github.com/BitsByBark/Caldera/releases).
 
 ### Linux
 
 **Fedora / RHEL / openSUSE (`.rpm`)**
-```bash
+```
 sudo dnf install ./caldera-*.rpm
 ```
 
 **Debian / Ubuntu (`.deb`)**
-```bash
+```
 sudo apt install ./caldera_*.deb
 ```
 
-**Anywhere (`.AppImage`)**
-```bash
+**AppImage (anywhere)**
+```
 chmod +x CALDERA-*.AppImage
 ./CALDERA-*.AppImage
 ```
 
-**Arch** — use the AppImage for now (native AUR package planned).
+**Arch** - use the AppImage for now, AUR is on the list.
 
 ### Windows
 
-Download the `.msi` or `.exe` installer and double-click it.
+grab the `.msi` or `.exe` from releases and run it.
 
 ---
 
-## Current Features
+## Whats in it right now (alpha)
 
-### Game library
-- Auto-detects installed Steam games (Linux + Windows Steam paths)
-- Manually add non-Steam games by install path
-- Pulls Steam library artwork (banner, hero, logo) into a local cache
-- Per-game configuration: mod directory, active deployer, profiles
+### game library
+- scans your steam library automatically (linux and windows paths)
+- add non-steam games manually by pointing at the install folder
+- caches steam artwork locally (banner, hero, logo)
+- per-game config: mod folder, deployer, profiles
 
-### Profiles
-- Multiple named profiles per game
-- Profile-scoped mod list with enable/disable toggles
-- Profile mod rows tracked separately from globally-installed mods
+### profiles
+- multiple profiles per game
+- per-profile mod list with enable/disable
+- profile mods tracked seperately from global installs
 
-### Deployers
-- Pluggable deployer system (TOML-defined) that places mod files into a game's mod directory
-- **Unreal Engine deployer** included: handles `.pak` / `.utoc` / `.ucas` files via the `~mods` folder convention, with basename grouping and alphabetical load order
-- Per-game deployer selection — pick the right one for each game
+### deployers
+- deployer system is TOML-defined, drop a file in `defaults/deployers/` and it gets picked up
+- **unreal engine deployer** ships out of the box - handles `.pak/.utoc/.ucas` files, drops them in `~mods`, groups by basename, alphabetical load order
+- select deployer per game
 
-### Mod operations
-- Uncompress mod archives (`.zip`) into staging
-- Deploy / undeploy individual mods to the game directory
-- Enable / disable mods without removing them
-- Listings → deployed mod manifest tracking
+### mod operations
+- extract `.zip` archives into staging
+- deploy to game folder, files tracked in `registry.caldera`
+- enable/disable without deleting anything (renames to `.disabled`, recovers state on next launch)
+- full per-mod manifest with every file path
 
-### Settings
-- Custom `.brk` settings schema format with live parsing on the frontend
-- Hot-reloadable settings (theme, accent color, scaling, sort order, parallel downloads…)
-- Configurable working directory — relocate the entire CALDERA runtime (cache, downloads, metadata) anywhere on disk
-- Per-game default-game preference
+### settings
+- `.brk` settings format with live reload
+- theme, accent color, ui scale, text scale all hot-reloadable
+- working directory is configurable, move the whole runtime wherever
 
-### Appearance
-- Theme system (ships with `rebellion`)
-- Custom accent color
-- UI scale + text scale independently adjustable
-- Native directory chooser dialogs
-
-### Packaging
-- Tagged commits auto-build `.rpm`, `.deb`, `.AppImage`, `.msi`, and `.exe` via GitHub Actions and publish to a Release
+### packaging
+- push a tag, get `.rpm` `.deb` `.AppImage` `.msi` `.exe` out the other side via github actions
 
 ---
 
-## Roadmap
+## whats blocking beta
 
-Rough order, not commitments.
+stuff that needs to exist before this is usable for a real person:
 
-### Near-term
-- [ ] Mod downloads (the `parallel_downloads` setting is wired but the download pipeline is still being built)
-- [ ] Metadata cache (global / per-game / auto modes — schema is defined)
-- [ ] Sort orders: name / date / size / status (UI hookup)
-- [ ] Native Arch / AUR package
-- [ ] Additional archive formats (`.7z`, `.rar`, `.tar.*`)
-
-### Mid-term
-- [ ] More deployers (BepInEx, MelonLoader, Skyrim/Bethesda data dirs, generic file overlay)
-- [ ] Mod source integrations (Nexus, GameBanana, Thunderstore)
-- [ ] Profile import/export & sharing
-- [ ] Load-order editor for deployers that need it
-- [ ] Dependency / conflict resolution
-
-### Longer-term
-- [ ] Wine / Proton awareness for Windows-only games on Linux
-- [ ] Cloud profile sync
-- [ ] Additional themes & a theme editor
-- [ ] Plugin API for community deployers and sources
+- [ ] **mod install from zip** - extract, build manifest, move to storage
+- [ ] **deploy** - copy files to game folder via deployer, write to registry
+- [ ] **enable/disable** - rename `.ext` to `.ext.disabled` and back, keep manifest in sync
+- [ ] **uninstall** - delete deployed files, remove from registry, keep storage
+- [ ] **state recovery** - on launch scan registry for `.disabled` files and reconcile
+- [ ] **profiles** - actually persist them, create/delete/rename, save modlist to `.profile` file
+- [ ] **UE deployer tested end to end** on a real game
+- [ ] **windows path handling** - separators, steam detection from registry, game-running guard
+- [ ] **basic errors** - bad zip, file missing, path wrong, game is open
 
 ---
 
-## Building from source
+## roadmap past beta
 
-```bash
-# Frontend
+no particular order, no dates.
+
+### next up
+- metadata and artwork actually showing (steam appcache pull)
+- manual game add with exe path for launcher support later
+- conflict detection
+- dry run mode (logs what would happen, doesnt touch anything)
+- restore points before deploys
+- `.7z` `.rar` `.tar.*` support
+
+### mid
+- download pipeline (`parallel_downloads` is wired up in settings, actual downloading isnt built yet)
+- browser extension for catching downloads (chrome + firefox)
+- more deployers: bepinex, melonloader, bethesda data folders, RE engine, generic overlay
+- FOMOD support
+- profile sharing as `.caldera` files
+- load order editor
+- AUR package
+
+### later
+- nexus/gamebanana/thunderstore integrations
+- LLM deployer suggestions for games we dont have a deployer for yet
+- community deployer submissions
+- proton/wine awareness
+- plugin api
+- theme editor
+
+---
+
+## building from source
+
+```
+# frontend
 cd frontend && npm install && npm run build
 
-# Tauri app (run from backend/)
+# backend
 cd ../backend
 cargo install tauri-cli --version "^2.0" --locked
-cargo tauri build      # or `cargo tauri dev` for hot-reload
+cargo tauri dev
 ```
 
-Linux build deps (Debian/Ubuntu names):
-`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev`
+### linux deps
+
+**debian/ubuntu**
+```
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev build-essential curl wget file
+```
+
+**fedora**
+```
+sudo dnf install webkit2gtk4.1-devel gtk3-devel libayatana-appindicator-gtk3-devel librsvg2-devel libsoup3-devel @development-tools curl wget file
+```
+
+**arch**
+```
+sudo pacman -S webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg libsoup3 base-devel curl wget file
+```
 
 ---
 
-## Releasing
+## releasing
 
-To trigger a release build:
-
-```bash
+```
 git tag v0.1-alpha
 git push origin v0.1-alpha
 ```
 
-GitHub Actions will build Linux + Windows packages and publish them automatically.
+actions picks it up and builds everything. tag with a `-` in it gets flagged as pre-release automatically.
 
-Pre-release flag is auto-set if the tag contains a `-` (e.g. `v0.1-alpha`, `v0.4-beta`).
+if a build fails and you need to pull the tag:
 
-To delete a tag if a build fails:
-
-```bash
+```
 git tag -d v0.1-alpha
 git push origin :refs/tags/v0.1-alpha
 ```
+
+---
+
+## contributing
+
+prs, issues, deployer TOMLs, themes, all welcome. for deployers just match the format in `defaults/deployers/` and use the UE deployer as reference.
+
+discord: **[TODO]**
+
+---
+
+## license
+
+GPL-3.0, see [LICENSE](LICENSE). fork it, ship it, just keep it open.
