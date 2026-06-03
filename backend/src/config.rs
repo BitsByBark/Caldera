@@ -24,14 +24,13 @@ pub fn get_game_config(game_id: String) -> GameConfig {
     }
 }
 
-pub fn save_game_config(game_id: String, config: GameConfig) {
+pub fn save_game_config(game_id: String, config: GameConfig) -> Result<(), AppError> {
     let path = crate::filehandler::runtime_reader::game_config_path(&game_id);
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-    if let Ok(body) = toml::to_string(&config) {
-        let _ = fs::write(&path, body);
-    }
+    let body = toml::to_string(&config).map_err(AppError::TomlSerialize)?;
+    fs::write(&path, body).with_path(&path)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +91,135 @@ fn listing_roots(game_name: &str, app_id: &str) -> Vec<PathBuf> {
     vec![crate::filehandler::runtime_reader::mods_dir(app_id)]
 }
 
+fn is_listing_metadata_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            e.eq_ignore_ascii_case("json")
+                || e.eq_ignore_ascii_case("toml")
+                || path.file_name().and_then(|n| n.to_str()) == Some("meta.toml")
+        })
+        .unwrap_or(false)
+}
+
+fn write_listing_file(path: &Path, listing: &ModListing) -> Result<(), AppError> {
+    let body = if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+    {
+        serde_json::to_string_pretty(listing).map_err(AppError::Json)?
+    } else {
+        toml::to_string_pretty(listing).map_err(AppError::TomlSerialize)?
+    };
+    fs::write(path, body).with_path(path)
+}
+
+fn source_path_matches_archive(source: &str, archive: &Path) -> bool {
+    let listed = PathBuf::from(source);
+    if listed == archive {
+        return true;
+    }
+    if let (Ok(a), Ok(b)) = (listed.canonicalize(), archive.canonicalize()) {
+        return a == b;
+    }
+    false
+}
+
+fn find_listing_path_for_archive(archive: &Path) -> Option<PathBuf> {
+    let parent = archive.parent()?;
+
+    if parent
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("files"))
+    {
+        if let Some(mod_root) = parent.parent() {
+            let meta = mod_root.join("meta.toml");
+            if meta.is_file() {
+                return Some(meta);
+            }
+        }
+    }
+
+    let archive_str = archive.to_string_lossy();
+    let entries = fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() || !is_listing_metadata_path(&path) {
+            continue;
+        }
+        let raw = fs::read_to_string(&path).ok()?;
+        let listing = parse_listing_file(&raw, &path)?;
+        if listing
+            .source_path
+            .as_deref()
+            .is_some_and(|s| source_path_matches_archive(s, archive) || s == archive_str)
+        {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+/// Point listing metadata at extracted files and drop the archive from `files`.
+pub fn update_listing_after_uncompress(
+    archive_path: &Path,
+    extract_dir: &Path,
+    extracted_files: &[PathBuf],
+) -> Result<(), AppError> {
+    let Some(listing_path) = find_listing_path_for_archive(archive_path) else {
+        return Ok(());
+    };
+
+    let raw = fs::read_to_string(&listing_path).with_path(&listing_path)?;
+    let mut listing = parse_listing_file(&raw, &listing_path).ok_or_else(|| {
+        AppError::other(format!(
+            "Failed parsing listing metadata {}",
+            listing_path.display()
+        ))
+    })?;
+
+    let archive_str = archive_path.to_string_lossy();
+    let under_mod_files = listing_path
+        .parent()
+        .map(|mod_root| {
+            let files_dir = mod_root.join("files");
+            archive_path.starts_with(&files_dir)
+        })
+        .unwrap_or(false);
+    let matches = listing
+        .source_path
+        .as_deref()
+        .is_some_and(|s| source_path_matches_archive(s, archive_path) || s == archive_str)
+        || under_mod_files;
+    if !matches {
+        return Ok(());
+    }
+
+    let display_name = archive_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("extracted")
+        .to_string();
+
+    listing.source_path = Some(extract_dir.to_string_lossy().to_string());
+    listing.name = display_name;
+    listing.files = extracted_files
+        .iter()
+        .filter_map(|p| p.file_name().and_then(|n| n.to_str().map(str::to_string)))
+        .collect();
+    if listing.files.is_empty() {
+        listing.file_count = Some(0.0);
+    } else {
+        listing.file_count = Some(listing.files.len() as f64);
+    }
+
+    write_listing_file(&listing_path, &listing)
+}
+
 fn parse_listing_file(raw: &str, path: &Path) -> Option<ModListing> {
     if path
         .extension()
@@ -102,6 +230,80 @@ fn parse_listing_file(raw: &str, path: &Path) -> Option<ModListing> {
         serde_json::from_str::<ModListing>(raw).ok()
     } else {
         toml::from_str::<ModListing>(raw).ok()
+    }
+}
+
+fn files_in_dir(dir: &Path) -> Vec<PathBuf> {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|p| p.is_file())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn listing_for_file(base: &ModListing, mod_id: &str, file_path: &Path) -> ModListing {
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown-file")
+        .to_string();
+    let mut listing = base.clone();
+    listing.mod_id = format!(
+        "{}:{}",
+        mod_id,
+        crate::filehandler::runtime_reader::safe_runtime_name(&file_name, "file")
+    );
+    listing.name = file_name.clone();
+    listing.status = "downloaded".to_string();
+    listing.source_path = Some(file_path.to_string_lossy().to_string());
+    listing.progress = Some(1.0);
+    listing.speed = Some("0 KB/S".to_string());
+    listing.file_size = fs::metadata(file_path).ok().map(|m| m.len() as f64);
+    listing.file_count = Some(1.0);
+    listing.files = vec![file_name];
+    listing
+}
+
+fn fallback_listing_for_file(mod_id: &str, file_path: &Path) -> ModListing {
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown-file")
+        .to_string();
+    ModListing {
+        mod_id: format!(
+            "{}:{}",
+            mod_id,
+            crate::filehandler::runtime_reader::safe_runtime_name(&file_name, "file")
+        ),
+        name: file_name.clone(),
+        status: "downloaded".to_string(),
+        source_path: Some(file_path.to_string_lossy().to_string()),
+        deployable: false,
+        deployer_reason: None,
+        added_at: None,
+        progress: Some(1.0),
+        speed: Some("0 KB/S".to_string()),
+        version: None,
+        author: None,
+        description: None,
+        summary: None,
+        source: Some("local".to_string()),
+        source_url: None,
+        nexus_mod_id: None,
+        nexus_file_id: None,
+        categories: Vec::new(),
+        tags: Vec::new(),
+        file_size: fs::metadata(file_path).ok().map(|m| m.len() as f64),
+        file_count: Some(1.0),
+        file_types: Vec::new(),
+        user_notes: None,
+        favorite: None,
+        files: vec![file_name],
     }
 }
 
@@ -119,9 +321,16 @@ fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), A
                 .unwrap_or("unknown-mod")
                 .to_string();
             let meta_path = p.join("meta.toml");
+            let actual_files = files_in_dir(&p.join("files"));
             if meta_path.is_file() {
                 if let Ok(raw) = fs::read_to_string(&meta_path) {
                     if let Some(mut parsed) = parse_listing_file(&raw, &meta_path) {
+                        if !actual_files.is_empty() {
+                            for file_path in &actual_files {
+                                out.push(listing_for_file(&parsed, &mod_id, file_path));
+                            }
+                            continue;
+                        }
                         if parsed.source_path.is_none() {
                             parsed.source_path =
                                 Some(p.join("files").to_string_lossy().to_string());
@@ -142,14 +351,13 @@ fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), A
                 }
             }
 
-            let files = fs::read_dir(p.join("files"))
-                .map(|entries| {
-                    entries
-                        .flatten()
-                        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            if !actual_files.is_empty() {
+                for file_path in &actual_files {
+                    out.push(fallback_listing_for_file(&mod_id, file_path));
+                }
+                continue;
+            }
+
             out.push(ModListing {
                 mod_id: mod_id.clone(),
                 name: mod_id,
@@ -171,11 +379,11 @@ fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), A
                 categories: Vec::new(),
                 tags: Vec::new(),
                 file_size: None,
-                file_count: Some(files.len() as f64),
+                file_count: Some(0.0),
                 file_types: Vec::new(),
                 user_notes: None,
                 favorite: None,
-                files,
+                files: Vec::new(),
             });
             continue;
         }

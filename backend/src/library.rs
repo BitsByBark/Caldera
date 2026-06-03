@@ -108,7 +108,7 @@ pub fn get_game_config(game_id: String) -> GameConfig {
     config::get_game_config(game_id)
 }
 
-pub fn save_game_config(game_id: String, config: GameConfig) {
+pub fn save_game_config(game_id: String, config: GameConfig) -> Result<(), AppError> {
     config::save_game_config(game_id, config)
 }
 

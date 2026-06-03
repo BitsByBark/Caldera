@@ -139,8 +139,13 @@
     }
 
     await refreshProfileModlist();
-    await loadModlistRows();
 
+    try {
+      await loadModlistRows();
+    } catch (err) {
+      addLog(`Failed to load modlist: ${String(err)}`, 'error');
+      modlistRows = [];
+    }
   });
 
   function onDone() {

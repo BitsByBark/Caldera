@@ -59,8 +59,8 @@ fn get_game_config(game_id: String) -> GameConfig {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn save_game_config(game_id: String, config: GameConfig) {
-    caldera_backend::save_game_config(game_id, config)
+fn save_game_config(game_id: String, config: GameConfig) -> Result<(), String> {
+    caldera_backend::save_game_config(game_id, config).map_err(|e| e.to_string())
 }
 
 #[tauri::command(rename_all = "camelCase")]

@@ -177,6 +177,7 @@
         !last?.message?.startsWith('Download queued:')
         && !last?.message?.startsWith('Download complete:')
         && !last?.message?.startsWith('Download failed:')
+        && !last?.message?.startsWith('Queued (awaiting auth URL):')
         && !last?.progressKey?.startsWith('download:')
       ) return;
       loadModlistRows().catch((err) => {
@@ -308,17 +309,21 @@
       'ONLINE INSTALL + LOCAL': 'online_local',
     }[exportPackType];
 
-    await invoke('export_pack', {
-      appId: params.id,
-      profileName: activeProfileValue,
-      packName: trimmedName,
-      version: trimmedVersion,
-      packType,
-      exportPath,
-      includeDisabled: includeDisabledMods,
-    });
-
-    closeExportPackModal();
+    try {
+      await invoke('export_pack', {
+        appId: params.id,
+        profileName: activeProfileValue,
+        packName: trimmedName,
+        version: trimmedVersion,
+        packType,
+        exportPath,
+        includeDisabled: includeDisabledMods,
+      });
+      addLog(`Export complete: ${trimmedName}`, 'success');
+      closeExportPackModal();
+    } catch (err) {
+      addLog(`Export failed: ${String(err)}`, 'error');
+    }
   }
 
   async function importPack() {
