@@ -25,6 +25,7 @@
   let activePaneTab = 'DEFAULT_PROFILE';
   let deployerCatalog = [];
   let profileModRows = [];
+  let modlistRows = [];
   const leftTabs = [
     { id: 'DOWNLOADED_MODS', label: 'DOWNLOADED MODS' },
     { id: 'COLLECTIONS', label: 'COLLECTIONS' },
@@ -52,6 +53,56 @@
   function toAssetUrl(path) {
     if (!path) return null;
     return window.__TAURI__ ? `asset://localhost${path}` : path;
+  }
+
+  function formatAddedAt(raw) {
+    if (!raw) return '--';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${dd}-${mm}-${yy} | ${hh}:${min}`;
+  }
+
+  function isCompressedFilename(name) {
+    const lower = String(name || '').toLowerCase();
+    return ['.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz'].some((ext) => lower.endsWith(ext));
+  }
+
+  function isDeployableByExtension(rowName, sourcePath) {
+    const lowerName = String(rowName || '').trim().toLowerCase();
+    const lowerSourceName = String(sourcePath || '')
+      .split('/')
+      .pop()
+      .split('\\')
+      .pop()
+      .trim()
+      .toLowerCase();
+    return ['.pak', '.utoc', '.ucas'].some(
+      (ext) => lowerName.endsWith(ext) || lowerSourceName.endsWith(ext),
+    );
+  }
+
+  function mapModlistRows(listings) {
+    return (listings || []).map((row) => ({
+      modId: row.mod_id || 'unknown',
+      name: row.name || row.mod_id || 'Unknown Mod',
+      sourcePath: row.source_path || null,
+      added: formatAddedAt(row.added_at),
+      status: String(row.status || 'unknown').toUpperCase(),
+      progress: Number(row.progress || 0),
+      compressed: isCompressedFilename(row.name || row.mod_id || ''),
+      deployable: !!row.deployable,
+      deployerReason: row.deployer_reason || null,
+    }));
+  }
+
+  async function loadModlistRows() {
+    const listings = await invoke('get_modlist_listings', { appId: params.id });
+    modlistRows = mapModlistRows(listings);
   }
 
   onMount(async () => {
@@ -88,6 +139,7 @@
     }
 
     await refreshProfileModlist();
+    await loadModlistRows();
 
   });
 
@@ -149,6 +201,31 @@
       await refreshProfileModlist();
     } catch (err) {
       addLog(`Toggle failed: ${String(err)}`, 'error');
+    }
+  }
+
+  async function onUncompressRow(row) {
+    if (!row?.sourcePath) {
+      addLog(`No source path available for ${row?.name || 'archive'}`, 'warning');
+      return;
+    }
+    try {
+      await invoke('uncompress_archive', { archivePath: row.sourcePath });
+      addLog(`Uncompress complete: ${row.name}`, 'success');
+      await loadModlistRows();
+    } catch (err) {
+      addLog(`Uncompress failed: ${String(err)}`, 'error');
+    }
+  }
+
+  async function onDeployListing(row) {
+    try {
+      await invoke('deploy_listing', { appId: params.id, listingId: row.modId });
+      addLog(`Deployed listing: ${row.name}`, 'success');
+      await loadModlistRows();
+      await refreshProfileModlist();
+    } catch (err) {
+      addLog(`Deploy failed: ${String(err)}`, 'error');
     }
   }
 
@@ -249,8 +326,45 @@
       </article>
     {:else if activePaneTab === 'DOWNLOADED_MODS'}
       <article class="modlist-pane">
-        <h3>DOWNLOADED MODS</h3>
-        <p>DOWNLOADED MODS PLACEHOLDER</p>
+        <h3>MODS PLAIN AND SIMPLE</h3>
+        <div class="mods-table">
+          <div class="mods-table-head">
+            <div class="mods-col mods-col-name">MOD NAME</div>
+            <div class="mods-col mods-col-date">DATE ADDED</div>
+            <div class="mods-col mods-col-status">STATUS</div>
+          </div>
+          {#each modlistRows as row}
+            <div class="mods-table-row">
+              <div class="mods-col mods-col-name">{row.name}</div>
+              <div class="mods-col mods-col-date">{row.added}</div>
+              <div class="mods-col mods-col-status">
+                {#if row.status === 'DOWNLOADING'}
+                  <div class="download-progress">
+                    <div class="download-progress-label">{Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%</div>
+                    <div class="download-progress-track">
+                      <div class="download-progress-fill" style={`width:${Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%`}></div>
+                    </div>
+                  </div>
+                {:else if row.compressed}
+                  <button class="uncompress-btn" on:click={() => onUncompressRow(row)}>UNCOMPRESS</button>
+                {:else if isDeployableByExtension(row.name, row.sourcePath)}
+                  <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
+                {:else if row.deployable}
+                  <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
+                {:else}
+                  {row.status}
+                {/if}
+              </div>
+            </div>
+          {/each}
+          {#if !modlistRows.length}
+            <div class="mods-table-row mods-empty-row">
+              <div class="mods-col mods-col-name">No listings found for this game id.</div>
+              <div class="mods-col mods-col-date">--</div>
+              <div class="mods-col mods-col-status">--</div>
+            </div>
+          {/if}
+        </div>
       </article>
     {:else}
       <article class="modlist-pane">
@@ -480,6 +594,47 @@
 
   .mods-col-status {
     text-align: right;
+  }
+
+  .download-progress {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .download-progress-label {
+    min-width: 34px;
+    color: var(--interactive);
+  }
+
+  .download-progress-track {
+    width: 90px;
+    height: 7px;
+    background: var(--ash);
+    overflow: hidden;
+  }
+
+  .download-progress-fill {
+    height: 100%;
+    background: var(--interactive);
+    transition: width 0.2s linear;
+  }
+
+  .uncompress-btn,
+  .deploy-btn {
+    border: 0;
+    border-radius: var(--border-radius);
+    padding: 4px 10px;
+    font-family: var(--font-ui);
+    cursor: pointer;
+    background: var(--interactive);
+    color: var(--btn-primary-text);
+  }
+
+  .uncompress-btn:hover,
+  .deploy-btn:hover {
+    opacity: 0.85;
   }
 
   .status-toggle {

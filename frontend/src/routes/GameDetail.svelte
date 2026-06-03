@@ -27,7 +27,6 @@
     profiles: [],
   };
   let artwork = { hero: '', logo: '' };
-  let editMode = false;
   let logExpanded = false;
   let logViewport;
   let activePaneTab = 'DOWNLOADED_MODS';
@@ -198,11 +197,6 @@
     addLog('Setup wizard requested', 'info');
   }
 
-  function toggleEditMode() {
-    editMode = !editMode;
-    addLog(editMode ? 'Manager mode toggle requested' : 'Manager mode toggle cleared', 'info');
-  }
-
   function onProfileChange(v) {
     if (!gameConfig.profiles?.length || v === '^ CREATE PROFILE') {
       showToast('Profile creation coming soon', 'info');
@@ -224,10 +218,6 @@
     } catch (err) {
       addLog(`Failed to set deployer: ${String(err)}`, 'error');
     }
-  }
-
-  function onUpdateAll() {
-    addLog('Update all requested', 'info');
   }
 
   function selectPaneTab(tabId) {
@@ -329,6 +319,23 @@
     closeExportPackModal();
   }
 
+  async function importPack() {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: 'Caldera pack', extensions: ['caldera'] }],
+      });
+      if (typeof selected !== 'string' || !selected.length) return;
+
+      addLog(`Importing pack: ${selected}`, 'info');
+      const result = await invoke('import_pack', { packPath: selected });
+      addLog(`Import complete: ${result.mods_installed} installed, ${result.mods_queued} queued, ${result.mods_failed} failed`, 'success');
+      await loadModlistRows();
+    } catch (err) {
+      addLog(`Import failed: ${String(err)}`, 'error');
+    }
+  }
+
   async function onUncompressRow(row) {
     if (!row?.sourcePath) {
       addLog(`No source path available for ${row?.name || 'archive'}`, 'warning');
@@ -368,81 +375,49 @@
 <section class="page game-detail">
   <TopBar backRoute="/" />
 
-  <main class={`hero-section ${editMode ? 'edit-mode' : ''}`}>
-    {#if editMode}
-      <section class="hero hero-edit">
-        <div class="hero-edit-left">
-          {#if artwork.logo}
-            <img
-              src={artwork.logo}
-              alt={game?.name || gameConfig.name || params.id}
-              on:error={() => (artwork = { ...artwork, logo: '' })}
-            />
-          {:else}
-            <div class="hero-name">{game?.name || gameConfig.name || params.id}</div>
-          {/if}
+  <main class="hero-section">
+    <section class="hero">
+      {#if artwork.hero}
+        <img
+          class="hero-image"
+          src={artwork.hero}
+          alt={game?.name || gameConfig.name || params.id}
+          on:error={() => (artwork = { ...artwork, hero: '' })}
+        />
+      {:else}
+        <div class="hero-fallback">
+          <div class="hero-placeholder-name">{game?.name || gameConfig.name || params.id}</div>
         </div>
-        <div class="hero-edit-right">
-          <button class="btn-primary launch-btn">-- LAUNCH</button>
-        </div>
-      </section>
-    {:else}
-      <section class="hero">
-        {#if artwork.hero}
+      {/if}
+
+      <div class="hero-logo">
+        {#if artwork.logo}
           <img
-            class="hero-image"
-            src={artwork.hero}
+            src={artwork.logo}
             alt={game?.name || gameConfig.name || params.id}
-            on:error={() => (artwork = { ...artwork, hero: '' })}
+            on:error={() => (artwork = { ...artwork, logo: '' })}
           />
         {:else}
-          <div class="hero-fallback">
-            <div class="hero-placeholder-name">{game?.name || gameConfig.name || params.id}</div>
-          </div>
+          <div class="hero-name">{game?.name || gameConfig.name || params.id}</div>
         {/if}
+      </div>
 
-        <div class="hero-logo">
-          {#if artwork.logo}
-            <img
-              src={artwork.logo}
-              alt={game?.name || gameConfig.name || params.id}
-              on:error={() => (artwork = { ...artwork, logo: '' })}
-            />
-          {:else}
-            <div class="hero-name">{game?.name || gameConfig.name || params.id}</div>
-          {/if}
-        </div>
-
-        <div class="hero-setup">
-          <Button variant="secondary" label="// SETUP" onClick={onSetup} />
-        </div>
-      </section>
-    {/if}
+      <div class="hero-setup">
+        <Button variant="secondary" label="// SETUP" onClick={onSetup} />
+      </div>
+    </section>
   </main>
 
   <section class="action-bar">
-    {#if editMode}
-      <div class="action-left">
-        <button class="edit-btn done-btn" on:click={toggleEditMode}>// DONE</button>
-        <button class="edit-btn update-all-btn" on:click={onUpdateAll}>^^ UPDATE ALL</button>
-      </div>
-    {:else}
-      <div class="action-left">
-        <button class="edit-btn" on:click={openProfilePage}>
-          {editMode ? '// DONE' : '// EDIT'}
-        </button>
-      </div>
-    {/if}
+    <div class="action-left">
+      <button class="edit-btn" on:click={openProfilePage}>// EDIT</button>
+    </div>
 
     <div class="selectors-right">
       <div class="selector">
         <span class="selector-label">PROFILE :</span>
         <div class="selector-input">
-          {#if editMode}
-            <Dropdown options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
-          {:else}
-            <Dropup options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
-          {/if}
+          <Dropup options={profileOptions} value={activeProfileValue} onChange={onProfileChange} />
         </div>
       </div>
 
@@ -451,81 +426,76 @@
       <div class="selector">
         <span class="selector-label">DEPLOYER =</span>
         <div class="selector-input">
-          {#if editMode}
-            <Dropdown options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
-          {:else}
-            <Dropup options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
-          {/if}
+          <Dropup options={deployerOptions} value={deployerValue} onChange={onDeployerChange} />
         </div>
       </div>
     </div>
   </section>
 
-  {#if editMode}
-    <section class="export-bar">
-      <button class="export-open-btn" on:click={openExportPackModal}>EXPORT ⭲</button>
-    </section>
+  <section class="export-bar">
+    <button class="import-open-btn" on:click={importPack}>IMPORT ⭳</button>
+    <button class="export-open-btn" on:click={openExportPackModal}>EXPORT ⭲</button>
+  </section>
 
-    <section class="tab-bar">
-      <div class="mods-tabs">
-        {#each leftTabs as tab}
-          <button class={`pane-tab ${activePaneTab === tab.id ? 'active' : ''}`} on:click={() => selectPaneTab(tab.id)}>{tab.label}</button>
-        {/each}
-      </div>
-      <button class={`pane-tab ${activePaneTab === defaultProfileTab.id ? 'active' : ''}`} on:click={openProfilePage}>{defaultProfileTab.label}</button>
-    </section>
+  <section class="tab-bar">
+    <div class="mods-tabs">
+      {#each leftTabs as tab}
+        <button class={`pane-tab ${activePaneTab === tab.id ? 'active' : ''}`} on:click={() => selectPaneTab(tab.id)}>{tab.label}</button>
+      {/each}
+    </div>
+    <button class={`pane-tab ${activePaneTab === defaultProfileTab.id ? 'active' : ''}`} on:click={openProfilePage}>{defaultProfileTab.label}</button>
+  </section>
 
-    <section class="modlist-pane-wrap">
-      {#if activePaneTab === 'DOWNLOADED_MODS'}
-        <article class="modlist-pane">
-          <h3>MODS PLAIN AND SIMPLE</h3>
-          <div class="mods-table">
-            <div class="mods-table-head">
-              <div class="mods-col mods-col-name">MOD NAME</div>
-              <div class="mods-col mods-col-date">DATE ADDED</div>
-              <div class="mods-col mods-col-status">STATUS</div>
-            </div>
-            {#each modlistRows as row}
-              <div class="mods-table-row">
-                <div class="mods-col mods-col-name">{row.name}</div>
-                <div class="mods-col mods-col-date">{row.added}</div>
-                <div class="mods-col mods-col-status">
-                  {#if row.status === 'DOWNLOADING'}
-                    <div class="download-progress">
-                      <div class="download-progress-label">{Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%</div>
-                      <div class="download-progress-track">
-                        <div class="download-progress-fill" style={`width:${Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%`}></div>
-                      </div>
-                    </div>
-                  {:else if row.compressed}
-                    <button class="uncompress-btn" on:click={() => onUncompressRow(row)}>UNCOMPRESS</button>
-                  {:else if isDeployableByExtension(row.name, row.sourcePath)}
-                    <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
-                  {:else if row.deployable}
-                    <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
-                  {:else}
-                    {row.status}
-                  {/if}
-                </div>
-              </div>
-            {/each}
-            {#if !modlistRows.length}
-              <div class="mods-table-row mods-empty-row">
-                <div class="mods-col mods-col-name">No listings found for this game id.</div>
-                <div class="mods-col mods-col-date">--</div>
-                <div class="mods-col mods-col-status">--</div>
-              </div>
-            {/if}
+  <section class="modlist-pane-wrap">
+    {#if activePaneTab === 'DOWNLOADED_MODS'}
+      <article class="modlist-pane">
+        <h3>MODS PLAIN AND SIMPLE</h3>
+        <div class="mods-table">
+          <div class="mods-table-head">
+            <div class="mods-col mods-col-name">MOD NAME</div>
+            <div class="mods-col mods-col-date">DATE ADDED</div>
+            <div class="mods-col mods-col-status">STATUS</div>
           </div>
-        </article>
-      {:else}
-        <article class="modlist-pane">
-          <h3>COLLECTIONS</h3>
-          <p>COLLECTIONS PLACEHOLDER</p>
-        </article>
-      {/if}
-    </section>
-  {/if}
+          {#each modlistRows as row}
+            <div class="mods-table-row">
+              <div class="mods-col mods-col-name">{row.name}</div>
+              <div class="mods-col mods-col-date">{row.added}</div>
+              <div class="mods-col mods-col-status">
+                {#if row.status === 'DOWNLOADING'}
+                  <div class="download-progress">
+                    <div class="download-progress-label">{Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%</div>
+                    <div class="download-progress-track">
+                      <div class="download-progress-fill" style={`width:${Math.round(Math.max(0, Math.min(1, row.progress)) * 100)}%`}></div>
+                    </div>
+                  </div>
+                {:else if row.compressed}
+                  <button class="uncompress-btn" on:click={() => onUncompressRow(row)}>UNCOMPRESS</button>
+                {:else if isDeployableByExtension(row.name, row.sourcePath)}
+                  <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
+                {:else if row.deployable}
+                  <button class="deploy-btn" on:click={() => onDeployListing(row)}>DEPLOY</button>
+                {:else}
+                  {row.status}
+                {/if}
+              </div>
+            </div>
+          {/each}
+          {#if !modlistRows.length}
+            <div class="mods-table-row mods-empty-row">
+              <div class="mods-col mods-col-name">No listings found for this game id.</div>
+              <div class="mods-col mods-col-date">--</div>
+              <div class="mods-col mods-col-status">--</div>
+            </div>
+          {/if}
+        </div>
+      </article>
+    {:else}
+      <article class="modlist-pane">
+        <h3>COLLECTIONS</h3>
+        <p>COLLECTIONS PLACEHOLDER</p>
+      </article>
+    {/if}
+  </section>
 
   {#if showExportModal}
     <div
@@ -661,10 +631,6 @@
     position: relative;
   }
 
-  .hero-section.edit-mode {
-    flex: 0;
-  }
-
   .hero {
     position: relative;
     height: 100%;
@@ -672,32 +638,6 @@
     border-bottom: var(--border-subtle);
     overflow: hidden;
     background: var(--bg-surface);
-  }
-
-  .hero-edit {
-    height: 80px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
-    box-sizing: border-box;
-  }
-
-  .hero-edit-left img {
-    max-height: 48px;
-    max-width: 260px;
-    object-fit: contain;
-    display: block;
-  }
-
-  .hero-edit-right {
-    width: 160px;
-  }
-
-  .launch-btn {
-    width: 100%;
-    height: 32px;
-    border-radius: var(--border-radius);
   }
 
   .hero-image {
@@ -743,13 +683,6 @@
     color: var(--text);
   }
 
-  .hero-edit .hero-name {
-    font-size: 20px;
-    font-weight: 400;
-    font-family: var(--font);
-    color: var(--text);
-  }
-
   .hero-setup {
     position: absolute;
     right: 24px;
@@ -784,23 +717,6 @@
     padding: 8px 12px;
     border-radius: var(--border-radius);
     cursor: pointer;
-  }
-
-  .done-btn {
-    background: var(--action);
-    color: #fff;
-    border: 0;
-  }
-
-  .update-all-btn {
-    background: var(--interactive);
-    color: var(--btn-primary-text);
-    border: 0;
-  }
-
-  .edit-btn.active {
-    border: var(--border-action);
-    color: var(--action);
   }
 
   .edit-btn:hover {
@@ -844,9 +760,11 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    gap: 10px;
     box-sizing: border-box;
   }
 
+  .import-open-btn,
   .export-open-btn,
   .export-submit-btn,
   .export-browse-btn,
@@ -860,6 +778,7 @@
     cursor: pointer;
   }
 
+  .import-open-btn,
   .export-open-btn,
   .export-submit-btn {
     border: 1px solid #E8B84B;
@@ -868,6 +787,7 @@
     padding: 9px 16px;
   }
 
+  .import-open-btn:hover,
   .export-open-btn:hover,
   .export-submit-btn:hover,
   .export-browse-btn:hover,
