@@ -33,10 +33,12 @@
   let activePaneTab = 'DOWNLOADED_MODS';
   let modlistRows = [];
   let showExportModal = false;
+  let exportPackVersion = '';
   let exportPackName = '';
   let exportPackType = 'OFFLINE INSTALL PACK';
   let exportPath = '';
   let includeDisabledMods = false;
+  let exportVersionError = '';
   let exportNameError = '';
   let unlistenSessionLog = null;
   const leftTabs = [
@@ -237,6 +239,7 @@
   }
 
   async function openExportPackModal() {
+    exportVersionError = '';
     exportNameError = '';
     showExportModal = true;
 
@@ -251,6 +254,7 @@
 
   function closeExportPackModal() {
     showExportModal = false;
+    exportVersionError = '';
     exportNameError = '';
   }
 
@@ -279,7 +283,16 @@
   }
 
   async function submitExportPack() {
+    const trimmedVersion = exportPackVersion.trim();
     const trimmedName = exportPackName.trim();
+    if (!trimmedVersion) {
+      exportVersionError = 'Version is required';
+      return;
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(trimmedVersion)) {
+      exportVersionError = 'Version must use semver format, e.g. 1.0.0';
+      return;
+    }
     if (!trimmedName) {
       exportNameError = 'Pack name is required';
       return;
@@ -293,8 +306,26 @@
       }
     }
 
+    exportVersionError = '';
     exportNameError = '';
     addLog(`Exporting pack: ${trimmedName} (${exportPackType})`, 'info');
+
+    const packType = {
+      'OFFLINE INSTALL PACK': 'offline',
+      'ONLINE INSTALL PACK': 'online',
+      'ONLINE INSTALL + LOCAL': 'online_local',
+    }[exportPackType];
+
+    await invoke('export_pack', {
+      appId: params.id,
+      profileName: activeProfileValue,
+      packName: trimmedName,
+      version: trimmedVersion,
+      packType,
+      exportPath,
+      includeDisabled: includeDisabledMods,
+    });
+
     closeExportPackModal();
   }
 
@@ -514,6 +545,20 @@
       >
         <button class="export-close-btn" aria-label="Close export pack modal" on:click={closeExportPackModal}>X</button>
         <h2 id="export-pack-title">EXPORT PACK</h2>
+
+        <label class="export-field">
+          <span>&#123; VERSION &#125;</span>
+          <input
+            type="text"
+            bind:value={exportPackVersion}
+            placeholder="1.0.0"
+            class:error={exportVersionError}
+            on:input={() => (exportVersionError = '')}
+          />
+          {#if exportVersionError}
+            <div class="export-error">{exportVersionError}</div>
+          {/if}
+        </label>
 
         <label class="export-field">
           <span>&#123; PACK NAME &#125;</span>

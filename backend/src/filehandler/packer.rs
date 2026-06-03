@@ -25,6 +25,7 @@ pub struct ImportResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackManifest {
     pack_format: u32,
+    version: String,
     name: String,
     #[serde(rename = "type")]
     pack_type: String,
@@ -269,6 +270,7 @@ pub mod export {
         app_id: String,
         profile_name: String,
         pack_name: String,
+        version: String,
         pack_type: String,
         export_path: String,
         include_disabled: bool,
@@ -358,6 +360,7 @@ pub mod export {
 
         let manifest = PackManifest {
             pack_format: PACK_FORMAT,
+            version,
             name: pack_name_trimmed.to_string(),
             pack_type: pack_type.clone(),
             created_at: now_iso(),
