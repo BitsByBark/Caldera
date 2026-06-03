@@ -9,6 +9,7 @@ use crate::deployer::ModManifest;
 use crate::filehandler::parser::{
     serialize_profile, CalderaProfile, ConflictRule, ModEntry, ProfileMeta,
 };
+use crate::{AppError, WithPath};
 
 pub const DEFAULT_PROFILE: &str = "DEFAULT";
 
@@ -107,7 +108,7 @@ pub fn collection_path(app_id: &str, collection_name: &str) -> PathBuf {
     ))
 }
 
-pub fn ensure_game_dirs(app_id: &str) -> Result<(), String> {
+pub fn ensure_game_dirs(app_id: &str) -> Result<(), AppError> {
     for dir in [
         metadata_dir(app_id),
         artwork_dir(app_id),
@@ -115,14 +116,14 @@ pub fn ensure_game_dirs(app_id: &str) -> Result<(), String> {
         profiles_dir(app_id),
         collections_dir(app_id),
     ] {
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed creating runtime dir {}: {}", dir.display(), e))?;
+        fs::create_dir_all(&dir).with_path(&dir)?;
     }
     Ok(())
 }
 
-pub fn read_to_string(path: PathBuf) -> Result<String, String> {
-    fs::read_to_string(&path).map_err(|e| format!("Failed reading {}: {}", path.display(), e))
+pub fn read_to_string(path: PathBuf) -> Result<String, AppError> {
+    let p = path.clone();
+    fs::read_to_string(path).with_path(&p)
 }
 
 fn now_iso() -> String {
@@ -131,7 +132,7 @@ fn now_iso() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-pub fn metadata_game_dir(app_id: &str) -> Result<PathBuf, String> {
+pub fn metadata_game_dir(app_id: &str) -> Result<PathBuf, AppError> {
     Ok(profiles_dir(app_id))
 }
 
@@ -149,30 +150,25 @@ fn init_profile(name: &str, deployer: &str) -> CalderaProfile {
     }
 }
 
-pub fn load_or_init_profile(app_id: &str, deployer: &str) -> Result<CalderaProfile, String> {
+pub fn load_or_init_profile(app_id: &str, deployer: &str) -> Result<CalderaProfile, AppError> {
     let path = default_profile_path(app_id);
     if !path.exists() {
         return Ok(init_profile(DEFAULT_PROFILE, deployer));
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed reading profile {}: {}", path.display(), e))?;
+    let raw = fs::read_to_string(&path).with_path(&path)?;
     match crate::filehandler::parser::parse_profile(&raw) {
         Ok(p) => Ok(p),
         Err(_) => Ok(init_profile(DEFAULT_PROFILE, deployer)),
     }
 }
 
-pub fn save_profile(app_id: &str, profile: &CalderaProfile) -> Result<(), String> {
+pub fn save_profile(app_id: &str, profile: &CalderaProfile) -> Result<(), AppError> {
     let path = default_profile_path(app_id);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating metadata dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-
     let body = serialize_profile(profile);
-    fs::write(&path, &body)
-        .map_err(|e| format!("Failed writing profile {}: {}", path.display(), e))?;
-    Ok(())
+    fs::write(&path, &body).with_path(&path)
 }
 
 fn manifest_file_types(manifest: &ModManifest) -> Vec<String> {
@@ -205,7 +201,7 @@ pub fn upsert_profile_from_deploy(
     deployer_id: &str,
     listing: &ModListing,
     manifest: &ModManifest,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let mut profile = load_or_init_profile(app_id, deployer_id)?;
     profile.profile.modified = now_iso();
     profile.profile.deployer = deployer_id.to_string();
@@ -274,16 +270,13 @@ pub fn upsert_profile_from_deploy(
     save_profile(app_id, &profile)
 }
 
-pub fn list_mod_dirs(app_id: &str) -> Result<Vec<PathBuf>, String> {
+pub fn list_mod_dirs(app_id: &str) -> Result<Vec<PathBuf>, AppError> {
     let dir = mods_dir(app_id);
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for entry in fs::read_dir(&dir)
-        .map_err(|e| format!("Failed reading mods dir {}: {}", dir.display(), e))?
-        .flatten()
-    {
+    for entry in fs::read_dir(&dir).with_path(&dir)?.flatten() {
         let path = entry.path();
         if path.is_dir() {
             out.push(path);

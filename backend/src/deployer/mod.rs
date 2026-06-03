@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+use crate::{AppError, WithPath};
+
 pub mod unreal;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,7 +148,7 @@ fn rfc3339_now_utc() -> Option<String> {
     OffsetDateTime::now_utc().format(&Rfc3339).ok()
 }
 
-fn load_registry() -> Result<RegistryFile, String> {
+fn load_registry() -> Result<RegistryFile, AppError> {
     let p = registry_path();
     if !p.exists() {
         return Ok(RegistryFile {
@@ -154,51 +156,36 @@ fn load_registry() -> Result<RegistryFile, String> {
             games: HashMap::new(),
         });
     }
-
-    let raw = fs::read_to_string(&p)
-        .map_err(|e| format!("Failed reading registry {}: {}", p.display(), e))?;
-    let parsed: RegistryFile =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid registry JSON: {}", e))?;
-    Ok(parsed)
+    let raw = fs::read_to_string(&p).with_path(&p)?;
+    serde_json::from_str(&raw).map_err(AppError::Json)
 }
 
-fn save_registry(registry: &RegistryFile) -> Result<(), String> {
+fn save_registry(registry: &RegistryFile) -> Result<(), AppError> {
     let p = registry_path();
     if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating registry dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-    let body = serde_json::to_string_pretty(registry)
-        .map_err(|e| format!("Failed serializing registry: {}", e))?;
-    fs::write(&p, body).map_err(|e| format!("Failed writing registry {}: {}", p.display(), e))
+    let body = serde_json::to_string_pretty(registry).map_err(AppError::Json)?;
+    fs::write(&p, body).with_path(&p)
 }
 
-fn load_manifest(app_id: &str, mod_id: &str) -> Result<Option<ModManifest>, String> {
+fn load_manifest(app_id: &str, mod_id: &str) -> Result<Option<ModManifest>, AppError> {
     let p = manifest_path(app_id, mod_id);
     if !p.exists() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(&p)
-        .map_err(|e| format!("Failed reading manifest {}: {}", p.display(), e))?;
-    let parsed = serde_json::from_str::<ModManifest>(&raw)
-        .map_err(|e| format!("Invalid manifest JSON {}: {}", p.display(), e))?;
+    let raw = fs::read_to_string(&p).with_path(&p)?;
+    let parsed = serde_json::from_str::<ModManifest>(&raw).map_err(AppError::Json)?;
     Ok(Some(parsed))
 }
 
-fn save_manifest(app_id: &str, mod_id: &str, manifest: &ModManifest) -> Result<(), String> {
+fn save_manifest(app_id: &str, mod_id: &str, manifest: &ModManifest) -> Result<(), AppError> {
     let p = manifest_path(app_id, mod_id);
     if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "Failed creating mod storage dir {}: {}",
-                parent.display(),
-                e
-            )
-        })?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-    let body = serde_json::to_string_pretty(manifest)
-        .map_err(|e| format!("Failed serializing manifest: {}", e))?;
-    fs::write(&p, body).map_err(|e| format!("Failed writing manifest {}: {}", p.display(), e))
+    let body = serde_json::to_string_pretty(manifest).map_err(AppError::Json)?;
+    fs::write(&p, body).with_path(&p)
 }
 
 #[cfg(unix)]
@@ -206,15 +193,8 @@ fn create_file_link(
     source: &Path,
     target: &Path,
     _logger: &impl DeployLogger,
-) -> Result<(), String> {
-    std::os::unix::fs::symlink(source, target).map_err(|e| {
-        format!(
-            "Failed linking {} -> {}: {}",
-            target.display(),
-            source.display(),
-            e
-        )
-    })
+) -> Result<(), AppError> {
+    std::os::unix::fs::symlink(source, target).with_path(target)
 }
 
 #[cfg(windows)]
@@ -222,27 +202,25 @@ fn create_file_link(
     source: &Path,
     target: &Path,
     logger: &impl DeployLogger,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     match std::os::windows::fs::symlink_file(source, target) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             // TODO: request elevation via Tauri, then retry the symlink.
-            logger.error("Symlinks require admin rights or Developer Mode — enable Developer Mode in Windows Settings > For Developers");
-            Err("Symlinks require admin rights or Developer Mode — enable Developer Mode in Windows Settings > For Developers".to_string())
+            let msg = "Symlinks require admin rights or Developer Mode — enable Developer Mode in Windows Settings > For Developers";
+            logger.error(msg);
+            Err(AppError::other(msg))
         }
-        Err(e) => Err(format!(
-            "Failed linking {} -> {}: {}",
-            target.display(),
-            source.display(),
-            e
-        )),
+        Err(e) => Err(AppError::Io {
+            path: target.to_path_buf(),
+            source: e,
+        }),
     }
 }
 
-fn remove_link_if_present(target: &Path) -> Result<bool, String> {
+fn remove_link_if_present(target: &Path) -> Result<bool, AppError> {
     if target.symlink_metadata().is_ok() {
-        fs::remove_file(target)
-            .map_err(|e| format!("Failed removing symlink {}: {}", target.display(), e))?;
+        fs::remove_file(target).with_path(target)?;
         Ok(true)
     } else {
         Ok(false)
@@ -253,43 +231,34 @@ fn source_file_path(app_id: &str, mod_id: &str, name: &str) -> PathBuf {
     mod_files_dir(app_id, mod_id).join(name)
 }
 
-pub fn read_game_meta(app_id: &str) -> Result<GameMeta, String> {
+pub fn read_game_meta(app_id: &str) -> Result<GameMeta, AppError> {
     let p = game_meta_path(app_id);
-    let raw = fs::read_to_string(&p)
-        .map_err(|e| format!("Failed reading game meta {}: {}", p.display(), e))?;
-    serde_json::from_str::<GameMeta>(&raw).map_err(|e| format!("Invalid game meta JSON: {}", e))
+    let raw = fs::read_to_string(&p).with_path(&p)?;
+    serde_json::from_str::<GameMeta>(&raw).map_err(AppError::Json)
 }
 
-pub fn read_game_cache_config(app_id: &str) -> Result<toml::Value, String> {
+pub fn read_game_cache_config(app_id: &str) -> Result<toml::Value, AppError> {
     let p = game_cache_config_path(app_id);
     if !p.exists() {
         return Ok(toml::Value::Table(toml::map::Map::new()));
     }
-    let raw = fs::read_to_string(&p)
-        .map_err(|e| format!("Failed reading cache config {}: {}", p.display(), e))?;
+    let raw = fs::read_to_string(&p).with_path(&p)?;
     if raw.trim().is_empty() {
         return Ok(toml::Value::Table(toml::map::Map::new()));
     }
-    toml::from_str::<toml::Value>(&raw)
-        .map_err(|e| format!("Invalid cache config TOML {}: {}", p.display(), e))
+    toml::from_str::<toml::Value>(&raw).map_err(AppError::TomlParse)
 }
 
-pub fn write_game_cache_config(app_id: &str, cfg: &toml::Value) -> Result<(), String> {
+pub fn write_game_cache_config(app_id: &str, cfg: &toml::Value) -> Result<(), AppError> {
     let p = game_cache_config_path(app_id);
     if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "Failed creating cache config dir {}: {}",
-                parent.display(),
-                e
-            )
-        })?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-    let body = toml::to_string(cfg).map_err(|e| format!("Failed serializing TOML: {}", e))?;
-    fs::write(&p, body).map_err(|e| format!("Failed writing cache config {}: {}", p.display(), e))
+    let body = toml::to_string(cfg).map_err(AppError::TomlSerialize)?;
+    fs::write(&p, body).with_path(&p)
 }
 
-pub fn get_deployer_override_path(app_id: &str) -> Result<Option<PathBuf>, String> {
+pub fn get_deployer_override_path(app_id: &str) -> Result<Option<PathBuf>, AppError> {
     let cfg = read_game_cache_config(app_id)?;
     let val = cfg
         .get("deployer_mod_path")
@@ -299,7 +268,7 @@ pub fn get_deployer_override_path(app_id: &str) -> Result<Option<PathBuf>, Strin
     Ok(val.filter(|s| !s.is_empty()).map(PathBuf::from))
 }
 
-fn get_selected_deployer(app_id: &str) -> Result<Option<String>, String> {
+fn get_selected_deployer(app_id: &str) -> Result<Option<String>, AppError> {
     let cfg = read_game_cache_config(app_id)?;
     Ok(cfg
         .get("deployer")
@@ -308,7 +277,7 @@ fn get_selected_deployer(app_id: &str) -> Result<Option<String>, String> {
         .filter(|s| !s.is_empty()))
 }
 
-fn load_deployer_config(app: &AppHandle, deployer_id: &str) -> Result<DeployerConfig, String> {
+fn load_deployer_config(app: &AppHandle, deployer_id: &str) -> Result<DeployerConfig, AppError> {
     let dev_path = PathBuf::from("../defaults")
         .join("deployers")
         .join(format!("{}.toml", deployer_id));
@@ -316,7 +285,7 @@ fn load_deployer_config(app: &AppHandle, deployer_id: &str) -> Result<DeployerCo
     let bundle_path = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("Failed reading resource dir: {}", e))?
+        .map_err(|e| AppError::other(format!("Failed reading resource dir: {}", e)))?
         .join("defaults")
         .join("deployers")
         .join(format!("{}.toml", deployer_id));
@@ -326,7 +295,7 @@ fn load_deployer_config(app: &AppHandle, deployer_id: &str) -> Result<DeployerCo
     } else if bundle_path.exists() {
         bundle_path
     } else {
-        return Err(format!(
+        return Err(AppError::other(format!(
             "Deployer config not found for '{}'. Looked in '{}' and '{}'",
             deployer_id,
             PathBuf::from("../defaults/deployers").display(),
@@ -334,27 +303,25 @@ fn load_deployer_config(app: &AppHandle, deployer_id: &str) -> Result<DeployerCo
                 .resource_dir()
                 .map(|p| p.join("defaults/deployers").display().to_string())
                 .unwrap_or_else(|_| "<resource_dir unavailable>".to_string())
-        ));
+        )));
     };
 
-    let raw = fs::read_to_string(&source)
-        .map_err(|e| format!("Failed reading deployer config {}: {}", source.display(), e))?;
-    toml::from_str::<DeployerConfig>(&raw)
-        .map_err(|e| format!("Invalid deployer TOML {}: {}", source.display(), e))
+    let raw = fs::read_to_string(&source).with_path(&source)?;
+    toml::from_str::<DeployerConfig>(&raw).map_err(AppError::TomlParse)
 }
 
-fn deployer_dirs(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
+fn deployer_dirs(app: &AppHandle) -> Result<Vec<PathBuf>, AppError> {
     let dev = PathBuf::from("../defaults").join("deployers");
     let bundle = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("Failed reading resource dir: {}", e))?
+        .map_err(|e| AppError::other(format!("Failed reading resource dir: {}", e)))?
         .join("defaults")
         .join("deployers");
     Ok(vec![dev, bundle])
 }
 
-pub fn get_available_deployers(app: &AppHandle) -> Result<Vec<DeployerOption>, String> {
+pub fn get_available_deployers(app: &AppHandle) -> Result<Vec<DeployerOption>, AppError> {
     let mut items: HashMap<String, DeployerOption> = HashMap::new();
 
     for dir in deployer_dirs(app)? {
@@ -362,18 +329,15 @@ pub fn get_available_deployers(app: &AppHandle) -> Result<Vec<DeployerOption>, S
             continue;
         }
 
-        let entries = fs::read_dir(&dir)
-            .map_err(|e| format!("Failed reading deployers dir {}: {}", dir.display(), e))?;
+        let entries = fs::read_dir(&dir).with_path(&dir)?;
         for entry in entries.flatten() {
             let p = entry.path();
             if p.extension().and_then(|e| e.to_str()) != Some("toml") {
                 continue;
             }
 
-            let raw = fs::read_to_string(&p)
-                .map_err(|e| format!("Failed reading deployer file {}: {}", p.display(), e))?;
-            let cfg = toml::from_str::<DeployerConfig>(&raw)
-                .map_err(|e| format!("Invalid deployer TOML {}: {}", p.display(), e))?;
+            let raw = fs::read_to_string(&p).with_path(&p)?;
+            let cfg = toml::from_str::<DeployerConfig>(&raw).map_err(AppError::TomlParse)?;
 
             items.insert(
                 cfg.id.clone(),
@@ -390,24 +354,28 @@ pub fn get_available_deployers(app: &AppHandle) -> Result<Vec<DeployerOption>, S
     Ok(out)
 }
 
-pub fn get_configured_deployer(app_id: &str) -> Result<Option<String>, String> {
+pub fn get_configured_deployer(app_id: &str) -> Result<Option<String>, AppError> {
     get_selected_deployer(app_id)
 }
 
-pub fn set_game_deployer(app: &AppHandle, app_id: &str, deployer_id: &str) -> Result<(), String> {
+pub fn set_game_deployer(
+    app: &AppHandle,
+    app_id: &str,
+    deployer_id: &str,
+) -> Result<(), AppError> {
     if deployer_id != "NONE" {
         let valid = get_available_deployers(app)?
             .into_iter()
             .any(|d| d.id == deployer_id);
         if !valid {
-            return Err(format!("Unknown deployer id: {}", deployer_id));
+            return Err(AppError::other(format!("Unknown deployer id: {}", deployer_id)));
         }
     }
 
     let mut cfg = read_game_cache_config(app_id)?;
     let table = cfg
         .as_table_mut()
-        .ok_or_else(|| "Cache config root must be a TOML table".to_string())?;
+        .ok_or_else(|| AppError::other("Cache config root must be a TOML table"))?;
     table.insert(
         "deployer".to_string(),
         toml::Value::String(deployer_id.to_string()),
@@ -415,7 +383,7 @@ pub fn set_game_deployer(app: &AppHandle, app_id: &str, deployer_id: &str) -> Re
     write_game_cache_config(app_id, &cfg)
 }
 
-fn ensure_game_not_running(logger: &impl DeployLogger) -> Result<(), String> {
+fn ensure_game_not_running(logger: &impl DeployLogger) -> Result<(), AppError> {
     logger.warning("Process detection is currently stubbed in this pass");
     Ok(())
 }
@@ -432,14 +400,16 @@ fn matches_patterns(name: &str, patterns: &[String]) -> bool {
     })
 }
 
-fn gather_mod_files(dir: &Path, cfg: &DeployerConfig) -> Result<Vec<PathBuf>, String> {
+fn gather_mod_files(dir: &Path, cfg: &DeployerConfig) -> Result<Vec<PathBuf>, AppError> {
     if !dir.exists() {
-        return Err(format!("Mod storage folder not found: {}", dir.display()));
+        return Err(AppError::other(format!(
+            "Mod storage folder not found: {}",
+            dir.display()
+        )));
     }
 
     let mut out = Vec::new();
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed reading mod storage folder {}: {}", dir.display(), e))?;
+    let entries = fs::read_dir(dir).with_path(dir)?;
     for entry in entries.flatten() {
         let p = entry.path();
         if !p.is_file() {
@@ -477,7 +447,10 @@ fn listing_candidate_names(listing: &crate::config::ModListing) -> Vec<String> {
     out
 }
 
-pub fn listing_matches_deployer(listing: &crate::config::ModListing, cfg: &DeployerConfig) -> bool {
+pub fn listing_matches_deployer(
+    listing: &crate::config::ModListing,
+    cfg: &DeployerConfig,
+) -> bool {
     let candidates = listing_candidate_names(listing);
     candidates
         .iter()
@@ -488,7 +461,7 @@ pub fn annotate_modlist_with_deployer(
     app: &AppHandle,
     app_id: &str,
     mut listings: Vec<crate::config::ModListing>,
-) -> Result<Vec<crate::config::ModListing>, String> {
+) -> Result<Vec<crate::config::ModListing>, AppError> {
     let selected = get_selected_deployer(app_id)?;
     let Some(deployer_id) = selected else {
         for l in &mut listings {
@@ -522,7 +495,7 @@ fn update_registry_from_manifest(
     app_id: &str,
     mod_id: &str,
     manifest: &ModManifest,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let mut reg = load_registry()?;
 
     let game = reg
@@ -549,7 +522,7 @@ fn update_registry_from_manifest(
     save_registry(&reg)
 }
 
-fn remove_registry_mod(app_id: &str, mod_id: &str) -> Result<(), String> {
+fn remove_registry_mod(app_id: &str, mod_id: &str) -> Result<(), AppError> {
     let mut reg = load_registry()?;
     if let Some(game) = reg.games.get_mut(app_id) {
         game.mods.remove(mod_id);
@@ -557,7 +530,10 @@ fn remove_registry_mod(app_id: &str, mod_id: &str) -> Result<(), String> {
     save_registry(&reg)
 }
 
-pub fn recover_registry_state(app_id: &str, logger: &impl DeployLogger) -> Result<(), String> {
+pub fn recover_registry_state(
+    app_id: &str,
+    logger: &impl DeployLogger,
+) -> Result<(), AppError> {
     let mut reg = load_registry()?;
     let Some(game) = reg.games.get_mut(app_id) else {
         return Ok(());
@@ -603,7 +579,7 @@ pub fn resolve_deployer_path(
     app: &AppHandle,
     app_id: String,
     deployer_id: String,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let logger = TauriLogger { app: app.clone() };
     recover_registry_state(&app_id, &logger)?;
 
@@ -611,23 +587,27 @@ pub fn resolve_deployer_path(
     match deployer_id.as_str() {
         "unreal_engine" => unreal::resolve_unreal_mod_path(&app_id, &cfg, &logger)
             .map(|p| p.to_string_lossy().to_string()),
-        _ => Err(format!("Unsupported deployer: {}", deployer_id)),
+        _ => Err(AppError::other(format!("Unsupported deployer: {}", deployer_id))),
     }
 }
 
-pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<ModManifest, String> {
+pub fn deploy_mod(
+    app: &AppHandle,
+    app_id: String,
+    mod_id: String,
+) -> Result<ModManifest, AppError> {
     let logger = TauriLogger { app: app.clone() };
     recover_registry_state(&app_id, &logger)?;
 
     let selected = get_selected_deployer(&app_id)?;
     let Some(deployer_id) = selected else {
         logger.error("No deployer configured");
-        return Err("No deployer configured".to_string());
+        return Err(AppError::other("No deployer configured"));
     };
 
     if deployer_id == "NONE" {
         logger.error("No deployer configured");
-        return Err("No deployer configured".to_string());
+        return Err(AppError::other("No deployer configured"));
     }
 
     ensure_game_not_running(&logger)?;
@@ -635,17 +615,11 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
     let cfg = load_deployer_config(app, &deployer_id)?;
     let target_dir = match deployer_id.as_str() {
         "unreal_engine" => unreal::resolve_unreal_mod_path(&app_id, &cfg, &logger)?,
-        _ => return Err(format!("Unsupported deployer: {}", deployer_id)),
+        _ => return Err(AppError::other(format!("Unsupported deployer: {}", deployer_id))),
     };
 
     if cfg.create_mod_folder {
-        fs::create_dir_all(&target_dir).map_err(|e| {
-            format!(
-                "Failed creating target mod dir {}: {}",
-                target_dir.display(),
-                e
-            )
-        })?;
+        fs::create_dir_all(&target_dir).with_path(&target_dir)?;
     }
 
     logger.info(&format!("Deploying to {}", target_dir.display()));
@@ -697,7 +671,11 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
     Ok(manifest)
 }
 
-pub fn undeploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<(), String> {
+pub fn undeploy_mod(
+    app: &AppHandle,
+    app_id: String,
+    mod_id: String,
+) -> Result<(), AppError> {
     let logger = TauriLogger { app: app.clone() };
     recover_registry_state(&app_id, &logger)?;
 
@@ -733,7 +711,7 @@ pub fn toggle_mod(
     app_id: String,
     mod_id: String,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     let logger = TauriLogger { app: app.clone() };
     recover_registry_state(&app_id, &logger)?;
 
@@ -741,11 +719,11 @@ pub fn toggle_mod(
 
     let existing = load_manifest(&app_id, &mod_id)?;
     let Some(mut manifest) = existing else {
-        return Err("Mod manifest not found".to_string());
+        return Err(AppError::other("Mod manifest not found"));
     };
 
     if manifest.files.is_empty() {
-        return Err("Mod manifest has no files".to_string());
+        return Err(AppError::other("Mod manifest has no files"));
     }
 
     for f in &mut manifest.files {
@@ -755,7 +733,7 @@ pub fn toggle_mod(
         if enabled {
             if !source.exists() {
                 logger.error(&format!("Missing source file for {}", f.name));
-                return Err(format!("Missing source file for {}", f.name));
+                return Err(AppError::other(format!("Missing source file for {}", f.name)));
             }
             if target.symlink_metadata().is_err() {
                 create_file_link(&source, &target, &logger)?;
@@ -786,11 +764,11 @@ pub fn toggle_mod(
     Ok(())
 }
 
-pub fn set_deployer_override_path(app_id: &str, path: &Path) -> Result<(), String> {
+pub fn set_deployer_override_path(app_id: &str, path: &Path) -> Result<(), AppError> {
     let mut cfg = read_game_cache_config(app_id)?;
     let obj = cfg
         .as_table_mut()
-        .ok_or_else(|| "Cache config root must be a TOML table".to_string())?;
+        .ok_or_else(|| AppError::other("Cache config root must be a TOML table"))?;
     obj.insert(
         "deployer_mod_path".to_string(),
         toml::Value::String(path.to_string_lossy().to_string()),
@@ -798,11 +776,14 @@ pub fn set_deployer_override_path(app_id: &str, path: &Path) -> Result<(), Strin
     write_game_cache_config(app_id, &cfg)
 }
 
-pub fn patch_game_cache_config(app_id: &str, patch: HashMap<String, Value>) -> Result<(), String> {
+pub fn patch_game_cache_config(
+    app_id: &str,
+    patch: HashMap<String, Value>,
+) -> Result<(), AppError> {
     let mut cfg = read_game_cache_config(app_id)?;
     let obj = cfg
         .as_table_mut()
-        .ok_or_else(|| "Cache config root must be a TOML table".to_string())?;
+        .ok_or_else(|| AppError::other("Cache config root must be a TOML table"))?;
 
     for (k, v) in patch {
         let toml_value = match v {
@@ -829,18 +810,18 @@ pub fn deploy_listing(
     app: &AppHandle,
     app_id: String,
     listing_id: String,
-) -> Result<ModManifest, String> {
+) -> Result<ModManifest, AppError> {
     let logger = TauriLogger { app: app.clone() };
     recover_registry_state(&app_id, &logger)?;
 
     let selected = get_selected_deployer(&app_id)?;
     let Some(deployer_id) = selected else {
         logger.error("No deployer configured");
-        return Err("No deployer configured".to_string());
+        return Err(AppError::other("No deployer configured"));
     };
     if deployer_id == "NONE" {
         logger.error("No deployer configured");
-        return Err("No deployer configured".to_string());
+        return Err(AppError::other("No deployer configured"));
     }
 
     let cfg = load_deployer_config(app, &deployer_id)?;
@@ -849,7 +830,7 @@ pub fn deploy_listing(
     let listing = listings
         .into_iter()
         .find(|l| l.mod_id == listing_id)
-        .ok_or_else(|| format!("Listing not found: {}", listing_id))?;
+        .ok_or_else(|| AppError::other(format!("Listing not found: {}", listing_id)))?;
 
     if !listing.deployable {
         let reason = listing
@@ -857,20 +838,14 @@ pub fn deploy_listing(
             .clone()
             .unwrap_or_else(|| "Listing is not accepted by selected deployer".to_string());
         logger.warning(&reason);
-        return Err(reason);
+        return Err(AppError::other(reason));
     }
 
     ensure_game_not_running(&logger)?;
 
     let mod_id = listing.mod_id.clone();
     let files_dir = mod_files_dir(&app_id, &mod_id);
-    fs::create_dir_all(&files_dir).map_err(|e| {
-        format!(
-            "Failed creating mod staging dir {}: {}",
-            files_dir.display(),
-            e
-        )
-    })?;
+    fs::create_dir_all(&files_dir).with_path(&files_dir)?;
 
     let mut copied = 0usize;
     let mut seen = HashSet::new();
@@ -915,19 +890,14 @@ pub fn deploy_listing(
             continue;
         }
         let target = files_dir.join(&file_name);
-        fs::copy(&src, &target).map_err(|e| {
-            format!(
-                "Failed staging {} -> {}: {}",
-                src.display(),
-                target.display(),
-                e
-            )
-        })?;
+        fs::copy(&src, &target).with_path(&target)?;
         copied += 1;
     }
 
     if copied == 0 {
-        return Err("No deployable files were staged from listing".to_string());
+        return Err(AppError::other(
+            "No deployable files were staged from listing",
+        ));
     }
 
     logger.info(&format!("Staged {} file(s) for {}", copied, mod_id));

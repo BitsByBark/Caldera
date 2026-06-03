@@ -8,6 +8,8 @@ use tauri::{AppHandle, Emitter};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+use crate::{AppError, WithPath};
+
 const PACK_FORMAT: u32 = 1;
 const CALDERA_MIN_VERSION: &str = "0.1.0";
 const CALDERA_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -107,37 +109,37 @@ fn safe_name(name: &str) -> String {
     }
 }
 
-fn append_bytes(builder: &mut Builder<Vec<u8>>, path: &str, bytes: &[u8]) -> Result<(), String> {
+fn append_bytes(
+    builder: &mut Builder<Vec<u8>>,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), AppError> {
     let mut header = Header::new_gnu();
     header.set_size(bytes.len() as u64);
     header.set_mode(0o644);
     header.set_cksum();
     builder
         .append_data(&mut header, path, Cursor::new(bytes))
-        .map_err(|e| format!("Failed adding {} to archive: {}", path, e))
+        .map_err(|e| AppError::other(format!("Failed adding {} to archive: {}", path, e)))
 }
 
-fn read_profile_text(app_id: &str, profile_name: &str) -> Result<String, String> {
+fn read_profile_text(app_id: &str, profile_name: &str) -> Result<String, AppError> {
     let requested = cache_profile_path(app_id, profile_name);
     if requested.exists() {
-        return fs::read_to_string(&requested)
-            .map_err(|e| format!("Failed reading profile {}: {}", requested.display(), e));
+        return fs::read_to_string(&requested).with_path(&requested);
     }
 
     let fallback = crate::filehandler::runtime_reader::default_profile_path(app_id);
-    fs::read_to_string(&fallback)
-        .map_err(|e| format!("Failed reading profile {}: {}", fallback.display(), e))
+    fs::read_to_string(&fallback).with_path(&fallback)
 }
 
-fn manifest_enabled(app_id: &str, mod_id: &str) -> Result<bool, String> {
+fn manifest_enabled(app_id: &str, mod_id: &str) -> Result<bool, AppError> {
     let p = mod_dir(app_id, mod_id).join("manifest.json");
     if !p.exists() {
         return Ok(true);
     }
-    let raw = fs::read_to_string(&p)
-        .map_err(|e| format!("Failed reading manifest {}: {}", p.display(), e))?;
-    let manifest: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("Invalid manifest JSON {}: {}", p.display(), e))?;
+    let raw = fs::read_to_string(&p).with_path(&p)?;
+    let manifest: serde_json::Value = serde_json::from_str(&raw).map_err(AppError::Json)?;
     let files = manifest
         .get("files")
         .and_then(|v| v.as_array())
@@ -154,7 +156,7 @@ fn manifest_enabled(app_id: &str, mod_id: &str) -> Result<bool, String> {
     }))
 }
 
-fn mod_meta_toml(entry: &crate::filehandler::parser::ModEntry) -> Result<String, String> {
+fn mod_meta_toml(entry: &crate::filehandler::parser::ModEntry) -> Result<String, AppError> {
     let mut table = toml::map::Map::new();
     table.insert("id".to_string(), toml::Value::String(entry.id.clone()));
     table.insert("name".to_string(), toml::Value::String(entry.name.clone()));
@@ -178,39 +180,35 @@ fn mod_meta_toml(entry: &crate::filehandler::parser::ModEntry) -> Result<String,
     if let Some(v) = &entry.summary {
         table.insert("summary".to_string(), toml::Value::String(v.clone()));
     }
-    toml::to_string(&toml::Value::Table(table))
-        .map_err(|e| format!("Failed serializing mod metadata: {}", e))
+    toml::to_string(&toml::Value::Table(table)).map_err(AppError::TomlSerialize)
 }
 
 fn read_or_make_meta(
     app_id: &str,
     entry: &crate::filehandler::parser::ModEntry,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let p = mod_dir(app_id, &entry.id).join("meta.toml");
     if p.exists() {
-        return fs::read_to_string(&p)
-            .map_err(|e| format!("Failed reading meta {}: {}", p.display(), e));
+        return fs::read_to_string(&p).with_path(&p);
     }
     mod_meta_toml(entry)
 }
 
-fn read_or_make_manifest(app_id: &str, mod_id: &str) -> Result<String, String> {
+fn read_or_make_manifest(app_id: &str, mod_id: &str) -> Result<String, AppError> {
     let p = mod_dir(app_id, mod_id).join("manifest.json");
     if p.exists() {
-        return fs::read_to_string(&p)
-            .map_err(|e| format!("Failed reading manifest {}: {}", p.display(), e));
+        return fs::read_to_string(&p).with_path(&p);
     }
     Ok("{\n  \"deployed\": false,\n  \"files\": []\n}".to_string())
 }
 
-fn bundled_files(app_id: &str, mod_id: &str) -> Result<Vec<PathBuf>, String> {
+fn bundled_files(app_id: &str, mod_id: &str) -> Result<Vec<PathBuf>, AppError> {
     let dir = mod_dir(app_id, mod_id).join("files");
     if !dir.exists() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    let entries = fs::read_dir(&dir)
-        .map_err(|e| format!("Failed reading mod dir {}: {}", dir.display(), e))?;
+    let entries = fs::read_dir(&dir).with_path(&dir)?;
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
@@ -233,11 +231,11 @@ fn should_bundle(pack_type: &str, source_url: Option<&String>) -> bool {
     pack_type == "offline" || (pack_type == "online_local" && source_url.is_none())
 }
 
-fn checksum_name(path: &Path) -> Result<String, String> {
+fn checksum_name(path: &Path) -> Result<String, AppError> {
     path.file_name()
         .and_then(|n| n.to_str())
         .map(str::to_string)
-        .ok_or_else(|| format!("Invalid file name: {}", path.display()))
+        .ok_or_else(|| AppError::other(format!("Invalid file name: {}", path.display())))
 }
 
 pub mod checksum {
@@ -245,15 +243,16 @@ pub mod checksum {
     use std::fs;
     use std::path::Path;
 
+    use crate::{AppError, WithPath};
+
     pub fn sha256_bytes(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
         format!("sha256:{:x}", hasher.finalize())
     }
 
-    pub fn sha256_file(path: &Path) -> Result<String, String> {
-        let bytes = fs::read(path)
-            .map_err(|e| format!("Failed reading file for checksum {}: {}", path.display(), e))?;
+    pub fn sha256_file(path: &Path) -> Result<String, AppError> {
+        let bytes = fs::read(path).with_path(path)?;
         Ok(sha256_bytes(&bytes))
     }
 
@@ -273,19 +272,19 @@ pub mod export {
         pack_type: String,
         export_path: String,
         include_disabled: bool,
-    ) -> Result<String, String> {
+    ) -> Result<String, AppError> {
         let pack_type = match pack_type.as_str() {
             "offline" | "online" | "online_local" => pack_type,
-            other => return Err(format!("Unsupported pack type: {}", other)),
+            other => return Err(AppError::other(format!("Unsupported pack type: {}", other))),
         };
         let pack_name_trimmed = pack_name.trim();
         if pack_name_trimmed.is_empty() {
-            return Err("Pack name is required".to_string());
+            return Err(AppError::other("Pack name is required"));
         }
 
         let profile_text = read_profile_text(&app_id, &profile_name)?;
         let parsed_profile = crate::filehandler::parser::parse_profile(&profile_text)
-            .map_err(|e| format!("Failed parsing profile: {}", e))?;
+            .map_err(|e| AppError::other(format!("Failed parsing profile: {}", e)))?;
         let game = crate::deployer::read_game_meta(&app_id)?;
         let deployer = parsed_profile.profile.deployer.clone();
 
@@ -328,9 +327,7 @@ pub mod export {
         let mut checked_files: HashMap<String, Vec<(PathBuf, PackFile)>> = HashMap::new();
         let mut total_size_bytes = 0u64;
         for (mod_id, path) in files_to_checksum {
-            let size = fs::metadata(&path)
-                .map_err(|e| format!("Failed reading metadata {}: {}", path.display(), e))?
-                .len();
+            let size = fs::metadata(&path).with_path(&path)?.len();
             let checksum = checksum::sha256_file(&path)?;
             total_size_bytes += size;
             checked_files.entry(mod_id).or_default().push((
@@ -378,16 +375,15 @@ pub mod export {
         };
 
         emit(app, "info", "Building archive");
-        let tar_bytes = build_pack(&app_id, &profile_text, &selected, &checked_files, &manifest)?;
+        let tar_bytes =
+            build_pack(&app_id, &profile_text, &selected, &checked_files, &manifest)?;
         let compressed = zstd::stream::encode_all(Cursor::new(tar_bytes), 3)
-            .map_err(|e| format!("Failed compressing pack: {}", e))?;
+            .map_err(|e| AppError::other(format!("Failed compressing pack: {}", e)))?;
 
         let out_dir = PathBuf::from(export_path);
-        fs::create_dir_all(&out_dir)
-            .map_err(|e| format!("Failed creating export dir {}: {}", out_dir.display(), e))?;
+        fs::create_dir_all(&out_dir).with_path(&out_dir)?;
         let out_path = out_dir.join(format!("{}.caldera", safe_name(pack_name_trimmed)));
-        fs::write(&out_path, &compressed)
-            .map_err(|e| format!("Failed writing pack {}: {}", out_path.display(), e))?;
+        fs::write(&out_path, &compressed).with_path(&out_path)?;
         emit(
             app,
             "success",
@@ -406,10 +402,10 @@ pub mod export {
         selected: &[(crate::filehandler::parser::ModEntry, bool)],
         checked_files: &HashMap<String, Vec<(PathBuf, PackFile)>>,
         manifest: &PackManifest,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, AppError> {
         let mut builder = Builder::new(Vec::new());
-        let manifest_json = serde_json::to_vec_pretty(manifest)
-            .map_err(|e| format!("Failed serializing pack manifest: {}", e))?;
+        let manifest_json =
+            serde_json::to_vec_pretty(manifest).map_err(AppError::Json)?;
         append_bytes(&mut builder, "pack.json", &manifest_json)?;
         append_bytes(&mut builder, "profile.toml", profile_text.as_bytes())?;
 
@@ -426,8 +422,7 @@ pub mod export {
             )?;
             if let Some(files) = checked_files.get(&entry.id) {
                 for (path, file) in files {
-                    let bytes = fs::read(path)
-                        .map_err(|e| format!("Failed reading file {}: {}", path.display(), e))?;
+                    let bytes = fs::read(path).with_path(path)?;
                     append_bytes(
                         &mut builder,
                         &format!("mods/{}/files/{}", entry.id, file.name),
@@ -439,35 +434,38 @@ pub mod export {
 
         builder
             .into_inner()
-            .map_err(|e| format!("Failed finalizing tar archive: {}", e))
+            .map_err(|e| AppError::other(format!("Failed finalizing tar archive: {}", e)))
     }
 }
 
 pub mod import {
     use super::*;
 
-    pub fn import_pack(app: &AppHandle, pack_path: String) -> Result<ImportResult, String> {
-        let compressed = fs::read(&pack_path)
-            .map_err(|e| format!("Failed reading pack {}: {}", pack_path, e))?;
+    pub fn import_pack(app: &AppHandle, pack_path: String) -> Result<ImportResult, AppError> {
+        let p = PathBuf::from(&pack_path);
+        let compressed = fs::read(&p).with_path(&p)?;
         let tar_bytes = zstd::stream::decode_all(Cursor::new(compressed))
-            .map_err(|e| format!("Failed decompressing pack: {}", e))?;
+            .map_err(|e| AppError::other(format!("Failed decompressing pack: {}", e)))?;
         let entries = read_pack_entries(&tar_bytes)?;
         let pack_json = entries
             .get("pack.json")
-            .ok_or_else(|| "Pack missing pack.json".to_string())?;
+            .ok_or_else(|| AppError::other("Pack missing pack.json"))?;
         let manifest: PackManifest =
-            serde_json::from_slice(pack_json).map_err(|e| format!("Invalid pack.json: {}", e))?;
+            serde_json::from_slice(pack_json).map_err(AppError::Json)?;
         emit(app, "info", &format!("Reading pack: {}", manifest.name));
 
         emit(app, "info", "Validating pack");
         if manifest.pack_format != PACK_FORMAT {
-            return Err(format!("Unsupported pack format: {}", manifest.pack_format));
+            return Err(AppError::other(format!(
+                "Unsupported pack format: {}",
+                manifest.pack_format
+            )));
         }
         if version_gt(&manifest.caldera_min_version, CALDERA_VERSION) {
-            return Err(format!(
+            return Err(AppError::other(format!(
                 "Pack requires CALDERA {}, running {}",
                 manifest.caldera_min_version, CALDERA_VERSION
-            ));
+            )));
         }
         if crate::deployer::read_game_meta(&manifest.game.id).is_err() {
             emit(
@@ -519,38 +517,39 @@ pub mod import {
         })
     }
 
-    pub fn read_pack(pack_path: &str) -> Result<PackManifest, String> {
-        let compressed =
-            fs::read(pack_path).map_err(|e| format!("Failed reading pack {}: {}", pack_path, e))?;
+    pub fn read_pack(pack_path: &str) -> Result<PackManifest, AppError> {
+        let p = PathBuf::from(pack_path);
+        let compressed = fs::read(&p).with_path(&p)?;
         let tar_bytes = zstd::stream::decode_all(Cursor::new(compressed))
-            .map_err(|e| format!("Failed decompressing pack: {}", e))?;
+            .map_err(|e| AppError::other(format!("Failed decompressing pack: {}", e)))?;
         let entries = read_pack_entries(&tar_bytes)?;
         let pack_json = entries
             .get("pack.json")
-            .ok_or_else(|| "Pack missing pack.json".to_string())?;
-        serde_json::from_slice(pack_json).map_err(|e| format!("Invalid pack.json: {}", e))
+            .ok_or_else(|| AppError::other("Pack missing pack.json"))?;
+        serde_json::from_slice(pack_json).map_err(AppError::Json)
     }
 
-    fn read_pack_entries(tar_bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, String> {
+    fn read_pack_entries(tar_bytes: &[u8]) -> Result<HashMap<String, Vec<u8>>, AppError> {
         let mut archive = Archive::new(Cursor::new(tar_bytes));
         let mut out = HashMap::new();
         let entries = archive
             .entries()
-            .map_err(|e| format!("Failed reading tar entries: {}", e))?;
+            .map_err(|e| AppError::other(format!("Failed reading tar entries: {}", e)))?;
         for entry in entries {
-            let mut entry = entry.map_err(|e| format!("Invalid tar entry: {}", e))?;
+            let mut entry =
+                entry.map_err(|e| AppError::other(format!("Invalid tar entry: {}", e)))?;
             if !entry.header().entry_type().is_file() {
                 continue;
             }
             let path = entry
                 .path()
-                .map_err(|e| format!("Invalid tar entry path: {}", e))?
+                .map_err(|e| AppError::other(format!("Invalid tar entry path: {}", e)))?
                 .to_string_lossy()
                 .replace('\\', "/");
             let mut bytes = Vec::new();
             entry
                 .read_to_end(&mut bytes)
-                .map_err(|e| format!("Failed reading tar entry {}: {}", path, e))?;
+                .map_err(|e| AppError::other(format!("Failed reading tar entry {}: {}", path, e)))?;
             out.insert(path, bytes);
         }
         Ok(out)
@@ -570,7 +569,7 @@ pub mod import {
         app: &AppHandle,
         manifest: &PackManifest,
         entries: &HashMap<String, Vec<u8>>,
-    ) -> Result<HashSet<String>, String> {
+    ) -> Result<HashSet<String>, AppError> {
         let mut verified = 0u32;
         let mut failed_mods = HashSet::new();
         for m in &manifest.mods {
@@ -613,32 +612,29 @@ pub mod import {
         app_id: &str,
         profile_name: &str,
         entries: &HashMap<String, Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let bytes = entries
             .get("profile.toml")
-            .ok_or_else(|| "Pack missing profile.toml".to_string())?;
+            .ok_or_else(|| AppError::other("Pack missing profile.toml"))?;
         let path = cache_profile_path(app_id, profile_name);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed creating profiles dir {}: {}", parent.display(), e))?;
+            fs::create_dir_all(parent).with_path(parent)?;
         }
-        fs::write(&path, bytes)
-            .map_err(|e| format!("Failed writing profile {}: {}", path.display(), e))
+        fs::write(&path, bytes).with_path(&path)
     }
 
     fn write_mod_metadata(
         app_id: &str,
         mod_id: &str,
         entries: &HashMap<String, Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let dir = mod_dir(app_id, mod_id).join("files");
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed creating mod dir {}: {}", dir.display(), e))?;
+        fs::create_dir_all(&dir).with_path(&dir)?;
         for name in ["meta.toml", "manifest.json"] {
             let entry_path = format!("mods/{}/{}", mod_id, name);
             if let Some(bytes) = entries.get(&entry_path) {
-                fs::write(dir.join(name), bytes)
-                    .map_err(|e| format!("Failed writing {} for {}: {}", name, mod_id, e))?;
+                let dest = dir.join(name);
+                fs::write(&dest, bytes).with_path(&dest)?;
             }
         }
         Ok(())
@@ -648,18 +644,17 @@ pub mod import {
         app_id: &str,
         mod_id: &str,
         entries: &HashMap<String, Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let dir = mod_dir(app_id, mod_id);
-        fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed creating mod dir {}: {}", dir.display(), e))?;
+        fs::create_dir_all(&dir).with_path(&dir)?;
         let prefix = format!("mods/{}/files/", mod_id);
         for (path, bytes) in entries.iter().filter(|(path, _)| path.starts_with(&prefix)) {
             let filename = path.trim_start_matches(&prefix);
             if filename.contains('/') || filename.contains('\\') || filename.is_empty() {
                 continue;
             }
-            fs::write(dir.join(filename), bytes)
-                .map_err(|e| format!("Failed extracting {}: {}", filename, e))?;
+            let dest = dir.join(filename);
+            fs::write(&dest, bytes).with_path(&dest)?;
         }
         Ok(())
     }
@@ -669,13 +664,11 @@ pub mod import {
         mods: &[PackMod],
         failed_mods: &HashSet<String>,
         entries: &HashMap<String, Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         let path = crate::filehandler::runtime_reader::registry_path();
         let mut registry = if path.exists() {
-            let raw = fs::read_to_string(&path)
-                .map_err(|e| format!("Failed reading registry {}: {}", path.display(), e))?;
-            serde_json::from_str::<serde_json::Value>(&raw)
-                .map_err(|e| format!("Invalid registry JSON: {}", e))?
+            let raw = fs::read_to_string(&path).with_path(&path)?;
+            serde_json::from_str::<serde_json::Value>(&raw).map_err(AppError::Json)?
         } else {
             serde_json::json!({ "version": 1, "games": {} })
         };
@@ -683,14 +676,14 @@ pub mod import {
         let games = registry
             .get_mut("games")
             .and_then(|v| v.as_object_mut())
-            .ok_or_else(|| "Invalid registry: missing games object".to_string())?;
+            .ok_or_else(|| AppError::other("Invalid registry: missing games object"))?;
         let game = games
             .entry(app_id.to_string())
             .or_insert_with(|| serde_json::json!({ "mods": {} }));
         let game_mods = game
             .get_mut("mods")
             .and_then(|v| v.as_object_mut())
-            .ok_or_else(|| "Invalid registry: missing game mods object".to_string())?;
+            .ok_or_else(|| AppError::other("Invalid registry: missing game mods object"))?;
 
         for m in mods {
             if failed_mods.contains(&m.id) || m.files.is_empty() {
@@ -705,12 +698,9 @@ pub mod import {
         }
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed creating registry dir {}: {}", parent.display(), e))?;
+            fs::create_dir_all(parent).with_path(parent)?;
         }
-        let body = serde_json::to_string_pretty(&registry)
-            .map_err(|e| format!("Failed serializing registry: {}", e))?;
-        fs::write(&path, body)
-            .map_err(|e| format!("Failed writing registry {}: {}", path.display(), e))
+        let body = serde_json::to_string_pretty(&registry).map_err(AppError::Json)?;
+        fs::write(&path, body).with_path(&path)
     }
 }

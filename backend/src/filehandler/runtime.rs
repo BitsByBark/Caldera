@@ -4,18 +4,22 @@ use std::sync::{OnceLock, RwLock};
 
 use serde_json::{Map, Value};
 
+use crate::{AppError, WithPath};
+
 static WORKING_DIR_OVERRIDE: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
 
 fn working_dir_cell() -> &'static RwLock<Option<PathBuf>> {
     WORKING_DIR_OVERRIDE.get_or_init(|| RwLock::new(None))
 }
 
-pub fn set_working_directory(path: Option<String>) -> Result<String, String> {
+pub fn set_working_directory(path: Option<String>) -> Result<String, AppError> {
     let next = match path {
         Some(raw) if !raw.trim().is_empty() => {
             let pb = PathBuf::from(raw.trim());
             if !pb.exists() || !pb.is_dir() {
-                return Err("Working directory must be an existing directory".to_string());
+                return Err(AppError::other(
+                    "Working directory must be an existing directory",
+                ));
             }
             Some(pb)
         }
@@ -26,7 +30,7 @@ pub fn set_working_directory(path: Option<String>) -> Result<String, String> {
     {
         let mut guard = cell
             .write()
-            .map_err(|_| "Working directory lock poisoned".to_string())?;
+            .map_err(|_| AppError::other("Working directory lock poisoned"))?;
         *guard = next;
     }
 
@@ -58,48 +62,47 @@ fn default_settings_schema() -> &'static str {
     include_str!("../../defaults/settings.brk")
 }
 
-pub fn get_settings_schema() -> Result<String, String> {
+pub fn get_settings_schema() -> Result<String, AppError> {
     let path = settings_schema_path();
     if !path.exists() {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed creating runtime dir {}: {}", parent.display(), e))?;
+            fs::create_dir_all(parent).with_path(parent)?;
         }
-        fs::write(&path, default_settings_schema())
-            .map_err(|e| format!("Failed writing settings schema {}: {}", path.display(), e))?;
+        fs::write(&path, default_settings_schema()).with_path(&path)?;
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed reading settings schema {}: {}", path.display(), e))?;
-    crate::filehandler::parser::parse_settings_schema(&raw)
-        .map_err(|e| format!("Failed parsing settings schema {}: {}", path.display(), e))?;
+    let raw = fs::read_to_string(&path).with_path(&path)?;
+    crate::filehandler::parser::parse_settings_schema(&raw).map_err(|e| {
+        AppError::other(format!(
+            "Failed parsing settings schema {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
     Ok(raw)
 }
 
-pub fn get_settings_values() -> Result<Value, String> {
+pub fn get_settings_values() -> Result<Value, AppError> {
     let path = settings_values_path();
     if !path.exists() {
         return Ok(Value::Object(Map::new()));
     }
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed reading settings values {}: {}", path.display(), e))?;
+    let raw = fs::read_to_string(&path).with_path(&path)?;
     if raw.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
     }
-    serde_json::from_str::<Value>(&raw)
-        .map_err(|e| format!("Invalid settings values JSON {}: {}", path.display(), e))
+    serde_json::from_str::<Value>(&raw).map_err(AppError::Json)
 }
 
-pub fn save_settings_values(values: Value) -> Result<(), String> {
+pub fn save_settings_values(values: Value) -> Result<(), AppError> {
     if !values.is_object() {
-        return Err("Settings values payload must be an object".to_string());
+        return Err(AppError::other(
+            "Settings values payload must be an object",
+        ));
     }
     let path = settings_values_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating runtime dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-    let body = serde_json::to_string_pretty(&values)
-        .map_err(|e| format!("Failed serializing settings values: {}", e))?;
-    fs::write(&path, body)
-        .map_err(|e| format!("Failed writing settings values {}: {}", path.display(), e))
+    let body = serde_json::to_string_pretty(&values).map_err(AppError::Json)?;
+    fs::write(&path, body).with_path(&path)
 }

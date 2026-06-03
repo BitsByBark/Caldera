@@ -445,6 +445,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
+ "thiserror 1.0.69",
  "time",
  "toml 0.8.2",
  "zip",

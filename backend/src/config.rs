@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::{fs, path::Path};
 
-use crate::GameConfig;
+use crate::{AppError, GameConfig, WithPath};
 use serde::{Deserialize, Serialize};
 
 pub fn get_game_config(game_id: String) -> GameConfig {
@@ -104,12 +104,11 @@ fn parse_listing_file(raw: &str, path: &Path) -> Option<ModListing> {
     }
 }
 
-fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), String> {
+fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), AppError> {
     if !dir.exists() || !dir.is_dir() {
         return Ok(());
     }
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed reading listings dir {}: {}", dir.display(), e))?;
+    let entries = fs::read_dir(dir).with_path(dir)?;
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() {
@@ -248,7 +247,7 @@ fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), S
     Ok(())
 }
 
-pub fn get_raw_modlist_listings(app_id: String) -> Result<Vec<ModListing>, String> {
+pub fn get_raw_modlist_listings(app_id: String) -> Result<Vec<ModListing>, AppError> {
     let meta = crate::deployer::read_game_meta(&app_id)?;
     let mut out = Vec::new();
     for root in listing_roots(&meta.name, &app_id) {
@@ -258,21 +257,20 @@ pub fn get_raw_modlist_listings(app_id: String) -> Result<Vec<ModListing>, Strin
     Ok(out)
 }
 
-pub fn get_modlist_listings(app_id: String) -> Result<Vec<ModListing>, String> {
+pub fn get_modlist_listings(app_id: String) -> Result<Vec<ModListing>, AppError> {
     get_raw_modlist_listings(app_id)
 }
 
-fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool), String> {
+fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool), AppError> {
     let manifest_path = crate::filehandler::runtime_reader::mod_manifest_path(app_id, mod_id);
 
     if !manifest_path.exists() {
         return Ok(("UNKNOWN".to_string(), false));
     }
 
-    let raw = fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("Failed reading manifest {}: {}", manifest_path.display(), e))?;
-    let manifest: ManifestView = serde_json::from_str(&raw)
-        .map_err(|e| format!("Invalid manifest JSON {}: {}", manifest_path.display(), e))?;
+    let raw = fs::read_to_string(&manifest_path).with_path(&manifest_path)?;
+    let manifest: ManifestView =
+        serde_json::from_str(&raw).map_err(AppError::Json)?;
 
     if manifest.files.is_empty() {
         return Ok(("UNKNOWN".to_string(), false));
@@ -302,16 +300,20 @@ fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool),
     }
 }
 
-pub fn get_profile_modlist(app_id: String) -> Result<Vec<ProfileModRow>, String> {
+pub fn get_profile_modlist(app_id: String) -> Result<Vec<ProfileModRow>, AppError> {
     let profile_path = crate::filehandler::runtime_reader::default_profile_path(&app_id);
     if !profile_path.exists() {
         return Ok(Vec::new());
     }
 
-    let raw = fs::read_to_string(&profile_path)
-        .map_err(|e| format!("Failed reading profile {}: {}", profile_path.display(), e))?;
-    let profile = crate::filehandler::parser::parse_profile(&raw)
-        .map_err(|e| format!("Failed parsing profile {}: {}", profile_path.display(), e))?;
+    let raw = fs::read_to_string(&profile_path).with_path(&profile_path)?;
+    let profile = crate::filehandler::parser::parse_profile(&raw).map_err(|e| {
+        AppError::other(format!(
+            "Failed parsing profile {}: {}",
+            profile_path.display(),
+            e
+        ))
+    })?;
 
     let mut rows = Vec::with_capacity(profile.modlist.len());
     for entry in profile.modlist {
@@ -327,14 +329,18 @@ pub fn get_profile_modlist(app_id: String) -> Result<Vec<ProfileModRow>, String>
     Ok(rows)
 }
 
-pub fn profile_contains_mod(app_id: &str, mod_id: &str) -> Result<bool, String> {
+pub fn profile_contains_mod(app_id: &str, mod_id: &str) -> Result<bool, AppError> {
     let profile_path = crate::filehandler::runtime_reader::default_profile_path(app_id);
     if !profile_path.exists() {
         return Ok(false);
     }
-    let raw = fs::read_to_string(&profile_path)
-        .map_err(|e| format!("Failed reading profile {}: {}", profile_path.display(), e))?;
-    let profile = crate::filehandler::parser::parse_profile(&raw)
-        .map_err(|e| format!("Failed parsing profile {}: {}", profile_path.display(), e))?;
+    let raw = fs::read_to_string(&profile_path).with_path(&profile_path)?;
+    let profile = crate::filehandler::parser::parse_profile(&raw).map_err(|e| {
+        AppError::other(format!(
+            "Failed parsing profile {}: {}",
+            profile_path.display(),
+            e
+        ))
+    })?;
     Ok(profile.modlist.iter().any(|m| m.id == mod_id))
 }

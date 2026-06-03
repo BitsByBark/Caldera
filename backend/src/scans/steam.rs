@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::{ArtworkPaths, SteamGame};
+use crate::{AppError, ArtworkPaths, SteamGame, WithPath};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -184,12 +184,12 @@ fn manual_app_id(name: &str) -> String {
     format!("manual:{}", slugify_name(name))
 }
 
-fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), String> {
+fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), AppError> {
     crate::filehandler::runtime_reader::ensure_game_dirs(&game.app_id)?;
 
     let config_toml = crate::filehandler::runtime_reader::game_config_path(&game.app_id);
     if !config_toml.exists() {
-        fs::write(&config_toml, "").map_err(|e| format!("failed writing config.toml: {}", e))?;
+        fs::write(&config_toml, "").with_path(&config_toml)?;
     }
 
     let meta = json!({
@@ -202,25 +202,23 @@ fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), String> {
         &meta_path,
         serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()),
     )
-    .map_err(|e| format!("failed writing meta.json: {}", e))?;
+    .with_path(&meta_path)?;
 
     Ok(())
 }
 
-fn load_manual_games() -> Result<Vec<SteamGame>, String> {
+fn load_manual_games() -> Result<Vec<SteamGame>, AppError> {
     let path = manual_games_path();
     if !path.exists() {
         return Ok(Vec::new());
     }
 
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("Failed reading manual games {}: {}", path.display(), e))?;
+    let raw = fs::read_to_string(&path).with_path(&path)?;
     if raw.trim().is_empty() {
         return Ok(Vec::new());
     }
 
-    let parsed: Vec<ManualGameEntry> = serde_json::from_str(&raw)
-        .map_err(|e| format!("Invalid manual games JSON {}: {}", path.display(), e))?;
+    let parsed: Vec<ManualGameEntry> = serde_json::from_str(&raw).map_err(AppError::Json)?;
 
     Ok(parsed
         .into_iter()
@@ -232,16 +230,10 @@ fn load_manual_games() -> Result<Vec<SteamGame>, String> {
         .collect())
 }
 
-fn save_manual_games(games: &[SteamGame]) -> Result<(), String> {
+fn save_manual_games(games: &[SteamGame]) -> Result<(), AppError> {
     let path = manual_games_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            format!(
-                "Failed creating manual games dir {}: {}",
-                parent.display(),
-                e
-            )
-        })?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
 
     let entries: Vec<ManualGameEntry> = games
@@ -254,10 +246,8 @@ fn save_manual_games(games: &[SteamGame]) -> Result<(), String> {
         })
         .collect();
 
-    let body = serde_json::to_string_pretty(&entries)
-        .map_err(|e| format!("Failed serializing manual games JSON: {}", e))?;
-    fs::write(&path, body)
-        .map_err(|e| format!("Failed writing manual games {}: {}", path.display(), e))
+    let body = serde_json::to_string_pretty(&entries).map_err(AppError::Json)?;
+    fs::write(&path, body).with_path(&path)
 }
 
 #[cfg(target_os = "linux")]
@@ -371,7 +361,7 @@ fn parse_appmanifest(path: &Path, library_steamapps: &Path) -> Option<SteamGame>
     })
 }
 
-pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, String> {
+pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, AppError> {
     let mut games = Vec::new();
     let steam_scan_failed = if let Some(steam_root) = resolve_steam_root(steam_path) {
         let libs = library_steamapps_dirs(&steam_root);
@@ -410,7 +400,7 @@ pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, Str
     games.dedup_by(|a, b| a.app_id == b.app_id);
 
     if games.is_empty() && steam_scan_failed {
-        return Err(steam_path_required_message());
+        return Err(AppError::other(steam_path_required_message()));
     }
 
     // Keep per-game runtime roots in sync with discovered/manual games.
@@ -421,10 +411,10 @@ pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, Str
     Ok(games)
 }
 
-pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, String> {
+pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, AppError> {
     let trimmed_name = name.trim();
     if trimmed_name.is_empty() {
-        return Err("Game name is required".to_string());
+        return Err(AppError::other("Game name is required"));
     }
 
     let resolved_install_path = {
@@ -434,7 +424,7 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
         } else {
             let install_path_buf = PathBuf::from(trimmed_path);
             if !install_path_buf.exists() || !install_path_buf.is_dir() {
-                return Err("Install directory does not exist".to_string());
+                return Err(AppError::other("Install directory does not exist"));
             }
             install_path_buf.to_string_lossy().to_string()
         }
@@ -455,11 +445,11 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
         })
     };
     if duplicate {
-        return Err(if resolved_install_path.is_empty() {
-            "Game with same name already exists".to_string()
+        return Err(AppError::other(if resolved_install_path.is_empty() {
+            "Game with same name already exists"
         } else {
-            "Game with same name and install directory already exists".to_string()
-        });
+            "Game with same name and install directory already exists"
+        }));
     }
 
     let base_id = manual_app_id(trimmed_name);
@@ -562,21 +552,22 @@ fn find_librarycache_file(steam_root: &Path, app_id: &str, filename: &str) -> Op
     None
 }
 
-fn copy_if_missing(src: &Path, dest: &Path) -> Result<(), String> {
+fn copy_if_missing(src: &Path, dest: &Path) -> Result<(), AppError> {
     if !src.exists() || dest.exists() {
         return Ok(());
     }
-    fs::copy(src, dest)
-        .map(|_| ())
-        .map_err(|e| format!("failed copying {}: {}", src.display(), e))
+    fs::copy(src, dest).with_path(dest).map(|_| ())
 }
 
-pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(), String> {
+pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(), AppError> {
     let is_manual = app_id.starts_with("manual:");
     let steam_root = if is_manual {
         None
     } else {
-        Some(resolve_steam_root(steam_path.clone()).ok_or_else(|| steam_path_required_message())?)
+        Some(
+            resolve_steam_root(steam_path.clone())
+                .ok_or_else(|| AppError::other(steam_path_required_message()))?,
+        )
     };
 
     let game_meta = get_steam_games(steam_path)?

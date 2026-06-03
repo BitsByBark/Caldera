@@ -6,6 +6,8 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+use crate::{AppError, WithPath};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NxmLink {
     pub game_domain: String,
@@ -33,31 +35,34 @@ struct DownloadProgressEvent {
     message: String,
 }
 
-pub fn parse_nxm(raw: &str) -> Result<NxmLink, String> {
-    let url = Url::parse(raw).map_err(|e| format!("Invalid NXM link: {}", e))?;
+pub fn parse_nxm(raw: &str) -> Result<NxmLink, AppError> {
+    let url =
+        Url::parse(raw).map_err(|e| AppError::other(format!("Invalid NXM link: {}", e)))?;
     if url.scheme() != "nxm" {
-        return Err("Invalid NXM link: scheme must be nxm".to_string());
+        return Err(AppError::other("Invalid NXM link: scheme must be nxm"));
     }
 
     let game_domain = url
         .host_str()
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| "Invalid NXM link: missing game domain".to_string())?
+        .ok_or_else(|| AppError::other("Invalid NXM link: missing game domain"))?
         .to_string();
     let segments = url
         .path_segments()
-        .ok_or_else(|| "Invalid NXM link: missing path".to_string())?
+        .ok_or_else(|| AppError::other("Invalid NXM link: missing path"))?
         .collect::<Vec<_>>();
     if segments.len() != 4 || segments[0] != "mods" || segments[2] != "files" {
-        return Err("Invalid NXM link: expected /mods/{mod_id}/files/{file_id}".to_string());
+        return Err(AppError::other(
+            "Invalid NXM link: expected /mods/{mod_id}/files/{file_id}",
+        ));
     }
 
     let mod_id = segments[1]
         .parse::<u32>()
-        .map_err(|_| "Invalid NXM link: mod_id must be numeric".to_string())?;
+        .map_err(|_| AppError::other("Invalid NXM link: mod_id must be numeric"))?;
     let file_id = segments[3]
         .parse::<u32>()
-        .map_err(|_| "Invalid NXM link: file_id must be numeric".to_string())?;
+        .map_err(|_| AppError::other("Invalid NXM link: file_id must be numeric"))?;
 
     let mut key = None;
     let mut expires = None;
@@ -68,13 +73,13 @@ pub fn parse_nxm(raw: &str) -> Result<NxmLink, String> {
             "expires" => {
                 expires = Some(
                     v.parse::<u64>()
-                        .map_err(|_| "Invalid NXM link: expires must be numeric".to_string())?,
+                        .map_err(|_| AppError::other("Invalid NXM link: expires must be numeric"))?,
                 )
             }
             "user_id" => {
                 user_id = Some(
                     v.parse::<u32>()
-                        .map_err(|_| "Invalid NXM link: user_id must be numeric".to_string())?,
+                        .map_err(|_| AppError::other("Invalid NXM link: user_id must be numeric"))?,
                 )
             }
             _ => {}
@@ -91,7 +96,7 @@ pub fn parse_nxm(raw: &str) -> Result<NxmLink, String> {
     })
 }
 
-pub async fn handle_nxm_link(app: AppHandle, url: String) -> Result<(), String> {
+pub async fn handle_nxm_link(app: AppHandle, url: String) -> Result<(), AppError> {
     let link = match parse_nxm(&url) {
         Ok(link) => link,
         Err(err) => {
@@ -242,7 +247,7 @@ pub async fn handle_nxm_link(app: AppHandle, url: String) -> Result<(), String> 
                 );
             }
             Err(err) => {
-                let _ = update_listing_failed(&listing_path, &err);
+                let _ = update_listing_failed(&listing_path, &err.to_string());
                 emit_log(
                     &app_for_download,
                     &format!("Download failed: {} ({})", mod_name, err),
@@ -292,35 +297,38 @@ async fn fetch_nexus_json(
     client: &reqwest::Client,
     api_key: &str,
     url: &str,
-) -> Result<Value, String> {
+) -> Result<Value, AppError> {
     let response = client
         .get(url)
         .header("apikey", api_key)
         .send()
         .await
-        .map_err(|e| format!("Nexus request failed: {}", e))?;
+        .map_err(|e| AppError::other(format!("Nexus request failed: {}", e)))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(format!("Nexus returned {} for {}", status.as_u16(), url));
+        return Err(AppError::other(format!(
+            "Nexus returned {} for {}",
+            status.as_u16(),
+            url
+        )));
     }
 
     response
         .json::<Value>()
         .await
-        .map_err(|e| format!("Invalid Nexus JSON: {}", e))
+        .map_err(|e| AppError::other(format!("Invalid Nexus JSON: {}", e)))
 }
 
-fn write_metadata(link: &NxmLink, _metadata: &Value) -> Result<(), String> {
+fn write_metadata(link: &NxmLink, _metadata: &Value) -> Result<(), AppError> {
     let mod_dir = mod_root_for_link(link)?;
-    fs::create_dir_all(mod_dir.join("files"))
-        .map_err(|e| format!("Failed creating mod storage {}: {}", mod_dir.display(), e))
+    let files_dir = mod_dir.join("files");
+    fs::create_dir_all(&files_dir).with_path(&files_dir)
 }
 
-fn append_queue_item(link: &NxmLink, metadata: &Value) -> Result<(), String> {
+fn append_queue_item(link: &NxmLink, metadata: &Value) -> Result<(), AppError> {
     let queue_path = crate::filehandler::runtime::base_config_dir().join("download_queue.json");
     let mut queue = if queue_path.exists() {
-        let raw = fs::read_to_string(&queue_path)
-            .map_err(|e| format!("Failed reading queue {}: {}", queue_path.display(), e))?;
+        let raw = fs::read_to_string(&queue_path).with_path(&queue_path)?;
         serde_json::from_str::<Vec<Value>>(&raw).unwrap_or_default()
     } else {
         Vec::new()
@@ -335,13 +343,10 @@ fn append_queue_item(link: &NxmLink, metadata: &Value) -> Result<(), String> {
     }));
 
     if let Some(parent) = queue_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating queue dir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).with_path(parent)?;
     }
-    let body = serde_json::to_string_pretty(&queue)
-        .map_err(|e| format!("Failed serializing queue: {}", e))?;
-    fs::write(&queue_path, body)
-        .map_err(|e| format!("Failed writing queue {}: {}", queue_path.display(), e))
+    let body = serde_json::to_string_pretty(&queue).map_err(AppError::Json)?;
+    fs::write(&queue_path, body).with_path(&queue_path)
 }
 
 fn first_download_uri(links: &Value) -> Option<String> {
@@ -419,15 +424,9 @@ fn safe_file_name(name: &str) -> String {
     }
 }
 
-fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, String> {
+fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, AppError> {
     let library_root = crate::filehandler::runtime_reader::library_dir();
-    let entries = fs::read_dir(&library_root).map_err(|e| {
-        format!(
-            "Failed reading library dir {}: {}",
-            library_root.display(),
-            e
-        )
-    })?;
+    let entries = fs::read_dir(&library_root).with_path(&library_root)?;
     for entry in entries.flatten() {
         let meta_path = entry.path().join("metadata").join("meta.json");
         if !meta_path.is_file() {
@@ -452,10 +451,10 @@ fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, String> {
         }
     }
 
-    Err(format!(
+    Err(AppError::other(format!(
         "No configured game matches Nexus domain {}",
         game_domain
-    ))
+    )))
 }
 
 fn storage_mod_id(link: &NxmLink) -> String {
@@ -465,17 +464,17 @@ fn storage_mod_id(link: &NxmLink) -> String {
     )
 }
 
-fn mod_root_for_link(link: &NxmLink) -> Result<PathBuf, String> {
+fn mod_root_for_link(link: &NxmLink) -> Result<PathBuf, AppError> {
     Ok(library_root_for_domain(&link.game_domain)?
         .join("mods")
         .join(storage_mod_id(link)))
 }
 
-fn download_dir_for_link(link: &NxmLink) -> Result<PathBuf, String> {
+fn download_dir_for_link(link: &NxmLink) -> Result<PathBuf, AppError> {
     Ok(mod_root_for_link(link)?.join("files"))
 }
 
-fn listing_path(link: &NxmLink) -> Result<PathBuf, String> {
+fn listing_path(link: &NxmLink) -> Result<PathBuf, AppError> {
     Ok(mod_root_for_link(link)?.join("meta.toml"))
 }
 
@@ -486,13 +485,12 @@ fn write_listing(
     progress: f32,
     status: &str,
     source_path: Option<String>,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, AppError> {
     let path = listing_path(link)?;
     let parent = path
         .parent()
-        .ok_or_else(|| format!("Invalid listing path {}", path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|e| format!("Failed creating mod dir {}: {}", parent.display(), e))?;
+        .ok_or_else(|| AppError::other(format!("Invalid listing path {}", path.display())))?;
+    fs::create_dir_all(parent).with_path(parent)?;
     let file = selected_file(metadata, link.file_id);
     let listing = crate::config::ModListing {
         mod_id: storage_mod_id(link),
@@ -530,27 +528,27 @@ fn write_listing(
     Ok(path)
 }
 
-fn read_listing(path: &PathBuf) -> Result<crate::config::ModListing, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| format!("Failed reading listing {}: {}", path.display(), e))?;
-    toml::from_str::<crate::config::ModListing>(&raw)
-        .map_err(|e| format!("Invalid listing TOML {}: {}", path.display(), e))
+fn read_listing(path: &PathBuf) -> Result<crate::config::ModListing, AppError> {
+    let raw = fs::read_to_string(path).with_path(path)?;
+    toml::from_str::<crate::config::ModListing>(&raw).map_err(AppError::TomlParse)
 }
 
-fn write_listing_value(path: &PathBuf, listing: &crate::config::ModListing) -> Result<(), String> {
-    let body = toml::to_string_pretty(listing)
-        .map_err(|e| format!("Failed serializing listing: {}", e))?;
-    fs::write(path, body).map_err(|e| format!("Failed writing listing {}: {}", path.display(), e))
+fn write_listing_value(
+    path: &PathBuf,
+    listing: &crate::config::ModListing,
+) -> Result<(), AppError> {
+    let body = toml::to_string_pretty(listing).map_err(AppError::TomlSerialize)?;
+    fs::write(path, body).with_path(path)
 }
 
-fn update_listing_progress(path: &PathBuf, progress: f32) -> Result<(), String> {
+fn update_listing_progress(path: &PathBuf, progress: f32) -> Result<(), AppError> {
     let mut listing = read_listing(path)?;
     listing.status = "downloading".to_string();
     listing.progress = Some(progress.clamp(0.0, 1.0));
     write_listing_value(path, &listing)
 }
 
-fn update_listing_downloaded(path: &PathBuf, file_path: &PathBuf) -> Result<(), String> {
+fn update_listing_downloaded(path: &PathBuf, file_path: &PathBuf) -> Result<(), AppError> {
     let mut listing = read_listing(path)?;
     listing.status = "downloaded".to_string();
     listing.source_path = Some(file_path.to_string_lossy().to_string());
@@ -564,7 +562,7 @@ fn update_listing_downloaded(path: &PathBuf, file_path: &PathBuf) -> Result<(), 
     write_listing_value(path, &listing)
 }
 
-fn update_listing_failed(path: &PathBuf, error: &str) -> Result<(), String> {
+fn update_listing_failed(path: &PathBuf, error: &str) -> Result<(), AppError> {
     let mut listing = read_listing(path)?;
     listing.status = "failed".to_string();
     listing.deployer_reason = Some(error.to_string());
@@ -578,17 +576,11 @@ async fn download_archive(
     metadata: &Value,
     listing_path: &PathBuf,
     mod_name: &str,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, AppError> {
     let download_url = value_string(metadata, &["download", "resolved_uri"])
-        .ok_or_else(|| "No resolved Nexus download URL".to_string())?;
+        .ok_or_else(|| AppError::other("No resolved Nexus download URL"))?;
     let download_dir = download_dir_for_link(link)?;
-    fs::create_dir_all(&download_dir).map_err(|e| {
-        format!(
-            "Failed creating download dir {}: {}",
-            download_dir.display(),
-            e
-        )
-    })?;
+    fs::create_dir_all(&download_dir).with_path(&download_dir)?;
 
     let file_name = safe_file_name(&selected_file_name(metadata, link.file_id, mod_name));
     let final_path = download_dir.join(file_name);
@@ -604,25 +596,26 @@ async fn download_archive(
         .get(download_url)
         .send()
         .await
-        .map_err(|e| format!("Archive download request failed: {}", e))?;
+        .map_err(|e| AppError::other(format!("Archive download request failed: {}", e)))?;
     let status = response.status();
     if !status.is_success() {
-        return Err(format!("Archive download returned {}", status.as_u16()));
+        return Err(AppError::other(format!(
+            "Archive download returned {}",
+            status.as_u16()
+        )));
     }
 
     let total = response.content_length().unwrap_or(0);
     let mut downloaded = 0_u64;
     let mut last_percent = 0_u8;
-    let mut out = fs::File::create(&part_path)
-        .map_err(|e| format!("Failed creating archive {}: {}", part_path.display(), e))?;
+    let mut out = fs::File::create(&part_path).with_path(&part_path)?;
 
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|e| format!("Failed reading archive response: {}", e))?
+        .map_err(|e| AppError::other(format!("Failed reading archive response: {}", e)))?
     {
-        out.write_all(&chunk)
-            .map_err(|e| format!("Failed writing archive {}: {}", part_path.display(), e))?;
+        out.write_all(&chunk).with_path(&part_path)?;
         downloaded += chunk.len() as u64;
         let percent = if total > 0 {
             ((downloaded.saturating_mul(100) / total).min(100)) as u8
@@ -642,18 +635,11 @@ async fn download_archive(
         }
     }
 
-    fs::rename(&part_path, &final_path).map_err(|e| {
-        format!(
-            "Failed finalizing archive {} -> {}: {}",
-            part_path.display(),
-            final_path.display(),
-            e
-        )
-    })?;
+    fs::rename(&part_path, &final_path).with_path(&final_path)?;
     Ok(final_path)
 }
 
-fn nexus_api_key() -> Result<String, String> {
+fn nexus_api_key() -> Result<String, AppError> {
     let values = crate::filehandler::runtime::get_settings_values()?;
     values
         .get("accounts")
@@ -663,7 +649,7 @@ fn nexus_api_key() -> Result<String, String> {
         .map(str::trim)
         .filter(|key| !key.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| "No Nexus API key set - add one in settings".to_string())
+        .ok_or_else(|| AppError::other("No Nexus API key set - add one in settings"))
 }
 
 fn emit_log(app: &AppHandle, message: &str, level: &str) {
