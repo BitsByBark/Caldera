@@ -18,6 +18,19 @@ pub struct NxmLink {
     pub user_id: Option<u32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct NxmCollectionLink {
+    pub game_domain: String,
+    pub slug: String,
+    pub revision: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+enum NxmLinkKind {
+    Mod(NxmLink),
+    Collection(NxmCollectionLink),
+}
+
 #[derive(Clone, Serialize)]
 struct LogEvent {
     message: String,
@@ -36,6 +49,15 @@ struct DownloadProgressEvent {
 }
 
 pub fn parse_nxm(raw: &str) -> Result<NxmLink, AppError> {
+    match parse_nxm_kind(raw)? {
+        NxmLinkKind::Mod(link) => Ok(link),
+        NxmLinkKind::Collection(_) => Err(AppError::other(
+            "Invalid NXM link: collection links are not mod downloads",
+        )),
+    }
+}
+
+fn parse_nxm_kind(raw: &str) -> Result<NxmLinkKind, AppError> {
     let url =
         Url::parse(raw).map_err(|e| AppError::other(format!("Invalid NXM link: {}", e)))?;
     if url.scheme() != "nxm" {
@@ -51,9 +73,31 @@ pub fn parse_nxm(raw: &str) -> Result<NxmLink, AppError> {
         .path_segments()
         .ok_or_else(|| AppError::other("Invalid NXM link: missing path"))?
         .collect::<Vec<_>>();
+    if segments.len() >= 2 && segments[0] == "collections" {
+        let slug = segments[1].trim();
+        if slug.is_empty() {
+            return Err(AppError::other("Invalid NXM collection link: missing slug"));
+        }
+        let revision = if segments.len() >= 4
+            && (segments[2] == "revisions" || segments[2] == "revision")
+        {
+            Some(
+                segments[3]
+                    .parse::<u32>()
+                    .map_err(|_| AppError::other("Invalid NXM collection link: revision must be numeric"))?,
+            )
+        } else {
+            None
+        };
+        return Ok(NxmLinkKind::Collection(NxmCollectionLink {
+            game_domain,
+            slug: slug.to_string(),
+            revision,
+        }));
+    }
     if segments.len() != 4 || segments[0] != "mods" || segments[2] != "files" {
         return Err(AppError::other(
-            "Invalid NXM link: expected /mods/{mod_id}/files/{file_id}",
+            "Invalid NXM link: expected /mods/{mod_id}/files/{file_id} or /collections/{slug}",
         ));
     }
 
@@ -86,25 +130,28 @@ pub fn parse_nxm(raw: &str) -> Result<NxmLink, AppError> {
         }
     }
 
-    Ok(NxmLink {
+    Ok(NxmLinkKind::Mod(NxmLink {
         game_domain,
         mod_id,
         file_id,
         key,
         expires,
         user_id,
-    })
+    }))
 }
 
 pub async fn handle_nxm_link(app: AppHandle, url: String) -> Result<(), AppError> {
-    let link = match parse_nxm(&url) {
-        Ok(link) => link,
+    match parse_nxm_kind(&url) {
+        Ok(NxmLinkKind::Mod(link)) => download_mod_link(app, link, url).await,
+        Ok(NxmLinkKind::Collection(link)) => handle_nxm_collection_link(app, link).await,
         Err(err) => {
             emit_log(&app, "Invalid NXM link", "error");
-            return Err(err);
+            Err(err)
         }
-    };
+    }
+}
 
+async fn download_mod_link(app: AppHandle, link: NxmLink, url: String) -> Result<(), AppError> {
     emit_log(
         &app,
         &format!(
@@ -257,6 +304,100 @@ pub async fn handle_nxm_link(app: AppHandle, url: String) -> Result<(), AppError
         }
     });
 
+    Ok(())
+}
+
+async fn handle_nxm_collection_link(
+    app: AppHandle,
+    link: NxmCollectionLink,
+) -> Result<(), AppError> {
+    emit_log(
+        &app,
+        &format!(
+            "Received Nexus collection link: {}/{}",
+            link.game_domain, link.slug
+        ),
+        "info",
+    );
+
+    if nexus_api_key().is_err() {
+        emit_log(&app, "No Nexus API key set - add one in settings", "error");
+        return Err(AppError::other("No Nexus API key set"));
+    }
+
+    let revision = match link.revision {
+        Some(rev) => rev,
+        None => {
+            emit_log(&app, "Fetching current collection revision...", "info");
+            crate::filehandler::packer::collections::fetch_collection_current_revision(
+                &link.game_domain,
+                &link.slug,
+            )
+            .await
+            .map_err(|e| {
+                emit_log(&app, &format!("Could not fetch revision: {}", e), "error");
+                e
+            })?
+        }
+    };
+
+    emit_log(
+        &app,
+        &format!("Fetching collection {} revision {}...", link.slug, revision),
+        "info",
+    );
+
+    let mods =
+        crate::filehandler::packer::collections::fetch_collection_revision_mods(
+            &link.slug,
+            revision,
+        )
+        .await
+        .map_err(|e| {
+            emit_log(&app, &format!("Could not fetch collection mods: {}", e), "error");
+            e
+        })?;
+
+    // Refresh the collections listing in the background.
+    let app_id = app_id_for_domain(&link.game_domain)?;
+    let bg_app_id = app_id.clone();
+    let bg_domain = link.game_domain.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = crate::filehandler::packer::collections::fetch_nexus_collections(
+            bg_app_id,
+            bg_domain,
+        )
+        .await;
+    });
+
+    let total = mods.len();
+    emit_log(
+        &app,
+        &format!("Queueing {} mods from collection {}...", total, link.slug),
+        "info",
+    );
+
+    for mod_entry in mods {
+        let nxm_link = NxmLink {
+            game_domain: mod_entry.game_domain.clone(),
+            mod_id: mod_entry.mod_id,
+            file_id: mod_entry.file_id,
+            key: None,
+            expires: None,
+            user_id: None,
+        };
+        let url = format!(
+            "nxm://{}/mods/{}/files/{}",
+            mod_entry.game_domain, mod_entry.mod_id, mod_entry.file_id
+        );
+        tauri::async_runtime::spawn(download_mod_link(app.clone(), nxm_link, url));
+    }
+
+    emit_log(
+        &app,
+        &format!("Collection {} queued ({} mods)", link.slug, total),
+        "success",
+    );
     Ok(())
 }
 
@@ -448,6 +589,39 @@ fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, AppError> {
         };
         if nexus_domain_for_name(&name) == game_domain {
             return Ok(crate::filehandler::runtime_reader::game_dir(&app_id));
+        }
+    }
+
+    Err(AppError::other(format!(
+        "No configured game matches Nexus domain {}",
+        game_domain
+    )))
+}
+
+fn app_id_for_domain(game_domain: &str) -> Result<String, AppError> {
+    let library_root = crate::filehandler::runtime_reader::library_dir();
+    let entries = fs::read_dir(&library_root).with_path(&library_root)?;
+    for entry in entries.flatten() {
+        let meta_path = entry.path().join("metadata").join("meta.json");
+        if !meta_path.is_file() {
+            continue;
+        }
+        let raw = match fs::read_to_string(&meta_path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let parsed = match serde_json::from_str::<Value>(&raw) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        let Some(app_id) = value_string(&parsed, &["app_id"]) else {
+            continue;
+        };
+        let Some(name) = value_string(&parsed, &["name"]) else {
+            continue;
+        };
+        if nexus_domain_for_name(&name) == game_domain {
+            return Ok(app_id);
         }
     }
 
@@ -706,7 +880,7 @@ fn now_rfc3339() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_nxm;
+    use super::{parse_nxm, parse_nxm_kind, NxmLinkKind};
 
     #[test]
     fn parses_nxm_link() {
@@ -720,5 +894,22 @@ mod tests {
         assert_eq!(parsed.key.as_deref(), Some("abc123"));
         assert_eq!(parsed.expires, Some(1730000000));
         assert_eq!(parsed.user_id, Some(99999));
+    }
+
+    #[test]
+    fn parses_collection_nxm_link() {
+        let parsed = parse_nxm_kind(
+            "nxm://cyberpunk2077/collections/cyberpunk-essentials/revisions/3",
+        )
+        .unwrap();
+
+        match parsed {
+            NxmLinkKind::Collection(collection) => {
+                assert_eq!(collection.game_domain, "cyberpunk2077");
+                assert_eq!(collection.slug, "cyberpunk-essentials");
+                assert_eq!(collection.revision, Some(3));
+            }
+            NxmLinkKind::Mod(_) => panic!("expected collection link"),
+        }
     }
 }

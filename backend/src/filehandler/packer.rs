@@ -919,21 +919,217 @@ pub mod collections {
         )
     }
 
+    #[derive(Debug, Clone)]
+    pub struct CollectionMod {
+        pub mod_id: u32,
+        pub file_id: u32,
+        pub game_domain: String,
+        pub name: String,
+        pub optional: bool,
+    }
+
+    pub async fn fetch_collection_current_revision(
+        game_domain: &str,
+        slug: &str,
+    ) -> Result<u32, AppError> {
+        let Some(api_key) = nexus_api_key()? else {
+            return Err(AppError::other("No Nexus API key set"));
+        };
+        let query = r#"query GetCollection($domainName: String, $slug: String!) {
+            collection(domainName: $domainName, slug: $slug) {
+                currentRevision { revisionNumber }
+            }
+        }"#;
+        let resp = reqwest::Client::new()
+            .post("https://api.nexusmods.com/v2/graphql")
+            .header("apikey", &api_key)
+            .header("Accept", "application/json")
+            .header("User-Agent", "CALDERA/0.1.1")
+            .json(&serde_json::json!({
+                "query": query,
+                "variables": { "domainName": game_domain, "slug": slug },
+                "operationName": "GetCollection",
+            }))
+            .send()
+            .await
+            .map_err(|e| AppError::other(format!("Nexus collection fetch failed: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::other(format!("Nexus collection response failed: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::other(format!(
+                "Nexus collection returned {}: {}",
+                status.as_u16(),
+                body.chars().take(240).collect::<String>()
+            )));
+        }
+        let parsed: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::other(format!("Nexus collection not JSON: {}", e))
+        })?;
+        if let Some(errors) = parsed.get("errors") {
+            return Err(AppError::other(format!(
+                "Nexus collection GraphQL error: {}",
+                errors
+            )));
+        }
+        parsed
+            .get("data")
+            .and_then(|d| d.get("collection"))
+            .and_then(|c| c.get("currentRevision"))
+            .and_then(|cr| cr.get("revisionNumber"))
+            .and_then(Value::as_u64)
+            .map(|n| n as u32)
+            .ok_or_else(|| AppError::other("No revision number in collection response"))
+    }
+
+    pub async fn fetch_collection_revision_mods(
+        slug: &str,
+        revision: u32,
+    ) -> Result<Vec<CollectionMod>, AppError> {
+        let Some(api_key) = nexus_api_key()? else {
+            return Err(AppError::other("No Nexus API key set"));
+        };
+        let query = r#"query CollectionRevisionMods($revision: Int, $slug: String!, $viewAdultContent: Boolean) {
+            collectionRevision(revision: $revision, slug: $slug, viewAdultContent: $viewAdultContent) {
+                modFiles {
+                    fileId
+                    optional
+                    file {
+                        fileId
+                        name
+                        mod {
+                            modId
+                            name
+                            game { domainName }
+                        }
+                    }
+                }
+            }
+        }"#;
+        let resp = reqwest::Client::new()
+            .post("https://api.nexusmods.com/v2/graphql")
+            .header("apikey", &api_key)
+            .header("Accept", "application/json")
+            .header("User-Agent", "CALDERA/0.1.1")
+            .json(&serde_json::json!({
+                "query": query,
+                "variables": { "revision": revision, "slug": slug, "viewAdultContent": true },
+                "operationName": "CollectionRevisionMods",
+            }))
+            .send()
+            .await
+            .map_err(|e| AppError::other(format!("Nexus collection mods fetch failed: {}", e)))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::other(format!("Nexus collection mods response failed: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::other(format!(
+                "Nexus collection mods returned {}: {}",
+                status.as_u16(),
+                body.chars().take(240).collect::<String>()
+            )));
+        }
+        let parsed: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::other(format!(
+                "Nexus collection mods not JSON: {} ({})",
+                e,
+                body.chars().take(240).collect::<String>()
+            ))
+        })?;
+        if let Some(errors) = parsed.get("errors") {
+            return Err(AppError::other(format!(
+                "Nexus collection mods GraphQL error: {}",
+                errors
+            )));
+        }
+        let mod_files = parsed
+            .get("data")
+            .and_then(|d| d.get("collectionRevision"))
+            .and_then(|cr| cr.get("modFiles"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut mods = Vec::new();
+        for mf in &mod_files {
+            let file_id = mf.get("fileId").and_then(Value::as_u64).unwrap_or(0) as u32;
+            let optional = mf.get("optional").and_then(Value::as_bool).unwrap_or(false);
+            let file = mf.get("file");
+            let mod_obj = file.and_then(|f| f.get("mod"));
+            let mod_id = mod_obj
+                .and_then(|m| m.get("modId"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as u32;
+            let game_domain = mod_obj
+                .and_then(|m| m.get("game"))
+                .and_then(|g| g.get("domainName"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let name = mod_obj
+                .and_then(|m| m.get("name"))
+                .and_then(Value::as_str)
+                .or_else(|| file.and_then(|f| f.get("name")).and_then(Value::as_str))
+                .unwrap_or("unknown")
+                .to_string();
+            if mod_id == 0 || file_id == 0 || game_domain.is_empty() {
+                continue;
+            }
+            mods.push(CollectionMod { mod_id, file_id, game_domain, name, optional });
+        }
+        Ok(mods)
+    }
+
     pub async fn fetch_nexus_collections(app_id: String, game_domain: String) -> Result<(), AppError> {
         let Some(api_key) = nexus_api_key()? else {
             return Ok(());
         };
-        let query = r#"query GetCollections($domainName: String!) { collections(domainName: $domainName) { nodes { id slug name description adultContent collectionStatus createdAt lastPublishedAt firstPublishedAt endorsements category { id name } headerImage { url thumbnailUrl(size: MED) } tileImage { url thumbnailUrl(size: MED) } currentRevision { revisionNumber modCount collectionChangelog { description } } latestPublishedRevision { revisionNumber modCount } game { id domainName name } badges { type title } } } }"#;
-        let response: Value = reqwest::Client::new()
-            .post("https://graphql.nexusmods.com/")
+        let query = r#"query GetCollections($domainName: String!) {
+            collections(domainName: $domainName) {
+                nodes {
+                    id slug name description adultContent endorsements
+                    createdAt lastPublishedAt
+                    tileImage { thumbnailUrl(size: small) }
+                    currentRevision { revisionNumber modCount }
+                    game { domainName }
+                }
+            }
+        }"#;
+        let response = reqwest::Client::new()
+            .post("https://api.nexusmods.com/v2/graphql")
             .header("apikey", api_key)
+            .header("Accept", "application/json")
+            .header("User-Agent", "CALDERA/0.1.1")
             .json(&serde_json::json!({ "query": query, "variables": { "domainName": game_domain } }))
             .send()
             .await
-            .map_err(|e| AppError::other(format!("Nexus collections fetch failed: {}", e)))?
-            .json()
+            .map_err(|e| AppError::other(format!("Nexus collections fetch failed: {}", e)))?;
+        let status = response.status();
+        let body = response
+            .text()
             .await
             .map_err(|e| AppError::other(format!("Nexus collections response failed: {}", e)))?;
+        if !status.is_success() {
+            return Err(AppError::other(format!(
+                "Nexus collections returned {}: {}",
+                status.as_u16(),
+                body.chars().take(240).collect::<String>()
+            )));
+        }
+        let response: Value = serde_json::from_str(&body).map_err(|e| {
+            AppError::other(format!(
+                "Nexus collections response was not JSON: {} ({})",
+                e,
+                body.chars().take(240).collect::<String>()
+            ))
+        })?;
+        if let Some(errors) = response.get("errors") {
+            return Err(AppError::other(format!("Nexus collections GraphQL error: {}", errors)));
+        }
         let dir = collections_dir(&app_id);
         fs::create_dir_all(&dir).with_path(&dir)?;
         let nodes = response
