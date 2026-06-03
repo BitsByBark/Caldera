@@ -450,20 +450,39 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
         return Err("Game name is required".to_string());
     }
 
-    let install_path_buf = PathBuf::from(install_path.trim());
-    if !install_path_buf.exists() || !install_path_buf.is_dir() {
-        return Err("Install directory does not exist".to_string());
-    }
+    let resolved_install_path = {
+        let trimmed_path = install_path.trim();
+        if trimmed_path.is_empty() {
+            String::new()
+        } else {
+            let install_path_buf = PathBuf::from(trimmed_path);
+            if !install_path_buf.exists() || !install_path_buf.is_dir() {
+                return Err("Install directory does not exist".to_string());
+            }
+            install_path_buf.to_string_lossy().to_string()
+        }
+    };
 
     let mut manual_games = load_manual_games()?;
     let norm_name = normalize_name(trimmed_name);
-    let norm_path = normalize_install_path(&install_path_buf);
 
-    if manual_games.iter().any(|g| {
-        normalize_name(&g.name) == norm_name
-            && normalize_install_path(Path::new(&g.install_path)) == norm_path
-    }) {
-        return Err("Game with same name and install directory already exists".to_string());
+    let duplicate = if resolved_install_path.is_empty() {
+        manual_games.iter().any(|g| {
+            normalize_name(&g.name) == norm_name && g.install_path.trim().is_empty()
+        })
+    } else {
+        let norm_path = normalize_install_path(Path::new(&resolved_install_path));
+        manual_games.iter().any(|g| {
+            normalize_name(&g.name) == norm_name
+                && normalize_install_path(Path::new(&g.install_path)) == norm_path
+        })
+    };
+    if duplicate {
+        return Err(if resolved_install_path.is_empty() {
+            "Game with same name already exists".to_string()
+        } else {
+            "Game with same name and install directory already exists".to_string()
+        });
     }
 
     let base_id = manual_app_id(trimmed_name);
@@ -479,7 +498,7 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
     let game = SteamGame {
         app_id: next_id,
         name: trimmed_name.to_string(),
-        install_path: install_path_buf.to_string_lossy().to_string(),
+        install_path: resolved_install_path,
     };
     manual_games.push(game.clone());
     save_manual_games(&manual_games)?;

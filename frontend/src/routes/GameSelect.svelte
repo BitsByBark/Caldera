@@ -130,15 +130,19 @@
           <input type="text" bind:value={manualGameName} placeholder="Ready or Not" />
         </label>
         <label class="field">
-          <span>INSTALL DIRECTORY</span>
+          <span>INSTALL DIRECTORY (OPTIONAL)</span>
           <div class="path-row">
-            <input type="text" bind:value={manualInstallPath} placeholder="/path/to/game" />
+            <input type="text" bind:value={manualInstallPath} placeholder="leave blank to add later" />
             <button class="pick-btn" type="button" on:click={chooseInstallDirectory}>...</button>
           </div>
         </label>
         <div class="modal-actions">
           <button class="modal-btn cancel" on:click={closeAddGameModal} disabled={addingManualGame}>CANCEL</button>
-          <button class="modal-btn add" on:click={submitManualGame} disabled={addingManualGame}>ADD</button>
+          <button
+            class="modal-btn add"
+            on:click={submitManualGame}
+            disabled={addingManualGame || !manualGameName.trim()}
+          >ADD</button>
         </div>
       </div>
     </div>
