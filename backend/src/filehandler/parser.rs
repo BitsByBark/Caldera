@@ -214,11 +214,10 @@ impl Lexer {
             _ if c.is_ascii_alphabetic() || c == '_' => {
                 let mut ident = String::new();
                 ident.push(c);
-                // Accept '-' in identifiers for runtime compatibility with file-stem mod ids
-                // (e.g. "my-mod-123"), even though canonical serialization should prefer snake_case.
-                ident.push_str(
-                    &self.read_while(|x| x.is_ascii_alphanumeric() || x == '_' || x == '-'),
-                );
+                // mod ids can include runtime path-ish segments (nexus-1-2:mod.pak)
+                ident.push_str(&self.read_while(|x| {
+                    x.is_ascii_alphanumeric() || x == '_' || x == '-' || x == ':' || x == '.'
+                }));
                 match ident.as_str() {
                     "true" => Ok(Token::Bool(true)),
                     "false" => Ok(Token::Bool(false)),
@@ -248,6 +247,14 @@ impl Parser {
         let t = self.peek().clone();
         self.i += 1;
         t
+    }
+
+    fn expect_block_key(&mut self) -> Result<String, String> {
+        match self.bump() {
+            Token::Str(s) => Ok(s),
+            Token::Ident(s) => Ok(s),
+            other => Err(format!("expected mod/conflict block key, got {:?}", other)),
+        }
     }
 
     fn expect_ident(&mut self) -> Result<String, String> {
@@ -413,7 +420,7 @@ pub fn parse_profile(text: &str) -> Result<CalderaProfile, String> {
             }
             "modlist" => {
                 while !matches!(p.peek(), Token::RBrace | Token::Eof) {
-                    let id = p.expect_ident()?;
+                    let id = p.expect_block_key()?;
                     p.expect(Token::LBrace)?;
                     let fields = p.parse_field_map()?;
                     modlist_entries.push((id, fields));
@@ -422,7 +429,7 @@ pub fn parse_profile(text: &str) -> Result<CalderaProfile, String> {
             }
             "conflicts" => {
                 while !matches!(p.peek(), Token::RBrace | Token::Eof) {
-                    let id = p.expect_ident()?;
+                    let id = p.expect_block_key()?;
                     p.expect(Token::LBrace)?;
                     let fields = p.parse_field_map()?;
                     conflict_entries.push((id, fields));
@@ -545,6 +552,16 @@ pub fn parse_profile(text: &str) -> Result<CalderaProfile, String> {
     })
 }
 
+fn format_block_key(id: &str) -> String {
+    if id.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '.'
+    }) {
+        id.to_string()
+    } else {
+        q(id)
+    }
+}
+
 pub fn serialize_profile(profile: &CalderaProfile) -> String {
     let mut out = String::new();
 
@@ -566,7 +583,7 @@ pub fn serialize_profile(profile: &CalderaProfile) -> String {
 
     out.push_str("modlist {\n");
     for entry in &profile.modlist {
-        out.push_str(&format!("    {} {{\n", entry.id));
+        out.push_str(&format!("    {} {{\n", format_block_key(&entry.id)));
         out.push_str(&format!("        name = {}\n", q(&entry.name)));
         out.push_str(&format!("        version = {}\n", q(&entry.version)));
         if let Some(v) = &entry.author {
@@ -613,7 +630,7 @@ pub fn serialize_profile(profile: &CalderaProfile) -> String {
 
     out.push_str("conflicts {\n");
     for c in &profile.conflicts {
-        out.push_str(&format!("    {} {{\n", c.id));
+        out.push_str(&format!("    {} {{\n", format_block_key(&c.id)));
         out.push_str(&format!("        file = {}\n", q(&c.file)));
         if let Some(winner) = &c.winner {
             out.push_str(&format!("        winner = {}\n", winner));
@@ -956,6 +973,26 @@ conflicts {
     }
 }
 "#;
+
+    #[test]
+    fn parses_mod_id_with_colon() {
+        let t = r#"
+profile { name="DEFAULT" created="c" modified="m" deployer="unreal_engine" }
+modlist {
+    nexus-readyornot-7699-27281:pakchunk9999-Mods_CazanusVisceralGore_P.pak {
+        name = "pakchunk9999-Mods_CazanusVisceralGore_P.pak"
+        version = "1"
+        source = "nexus"
+    }
+}
+conflicts {}
+"#;
+        let p = parse_profile(t).expect("parse should succeed");
+        assert_eq!(
+            p.modlist[0].id,
+            "nexus-readyornot-7699-27281:pakchunk9999-Mods_CazanusVisceralGore_P.pak"
+        );
+    }
 
     #[test]
     fn parses_full_example() {

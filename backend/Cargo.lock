@@ -431,9 +431,10 @@ dependencies = [
 
 [[package]]
 name = "caldera-backend"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "dirs 5.0.1",
+ "open",
  "reqwest",
  "serde",
  "serde_json",

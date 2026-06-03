@@ -671,6 +671,23 @@ pub fn deploy_mod(
     Ok(manifest)
 }
 
+pub fn mod_deploy_folder(app_id: &str, mod_id: &str) -> Result<PathBuf, AppError> {
+    let Some(manifest) = load_manifest(app_id, mod_id)? else {
+        return Err(AppError::other("Mod has not been deployed yet"));
+    };
+    let dir = PathBuf::from(manifest.target_folder.trim());
+    if dir.as_os_str().is_empty() {
+        return Err(AppError::other("Deploy folder is not set for this mod"));
+    }
+    if !dir.is_dir() {
+        return Err(AppError::other(format!(
+            "Deploy folder does not exist: {}",
+            dir.display()
+        )));
+    }
+    Ok(dir)
+}
+
 pub fn undeploy_mod(
     app: &AppHandle,
     app_id: String,

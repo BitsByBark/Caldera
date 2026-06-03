@@ -163,6 +163,33 @@ pub fn get_profile_modlist(app_id: String) -> Result<Vec<config::ProfileModRow>,
     config::get_profile_modlist(app_id)
 }
 
+pub fn open_downloads_folder(app_id: String) -> Result<String, AppError> {
+    use std::fs;
+
+    let dir = filehandler::runtime_reader::mods_dir(&app_id);
+    fs::create_dir_all(&dir).with_path(&dir)?;
+    open::that(&dir).map_err(|e| {
+        AppError::other(format!(
+            "Failed opening downloads folder {}: {}",
+            dir.display(),
+            e
+        ))
+    })?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+pub fn open_mod_deploy_folder(app_id: String, mod_id: String) -> Result<String, AppError> {
+    let dir = deployer::mod_deploy_folder(&app_id, &mod_id)?;
+    open::that(&dir).map_err(|e| {
+        AppError::other(format!(
+            "Failed opening deploy folder {}: {}",
+            dir.display(),
+            e
+        ))
+    })?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
 pub fn resolve_deployer_path(
     app: &tauri::AppHandle,
     app_id: String,

@@ -194,6 +194,18 @@
     }
   }
 
+  async function onOpenDeployFolder(row) {
+    try {
+      const path = await invoke('open_mod_deploy_folder', {
+        appId: params.id,
+        modId: row.mod_id,
+      });
+      addLog(`Opened deploy folder: ${path}`, 'info');
+    } catch (err) {
+      addLog(`Failed to open deploy folder: ${String(err)}`, 'error');
+    }
+  }
+
   async function onToggleProfileMod(row) {
     const nextEnabled = row.status !== 'ENABLED';
     try {
@@ -307,16 +319,23 @@
               <div class="mods-col mods-col-name">{row.name}</div>
               <div class="mods-col mods-col-date">{row.date_added}</div>
               <div class="mods-col mods-col-status">
-                {#if row.toggleable}
+                <div class="status-actions">
                   <button
-                    class={`status-toggle ${row.status === 'ENABLED' ? 'on' : 'off'}`}
-                    on:click={() => onToggleProfileMod(row)}
-                  >
-                    <span class="toggle-pill"></span>
-                  </button>
-                {:else}
-                  {row.status}
-                {/if}
+                    class="open-folder-btn"
+                    on:click={() => onOpenDeployFolder(row)}
+                    title="Open deploy folder"
+                  >OPEN</button>
+                  {#if row.toggleable}
+                    <button
+                      class={`status-toggle ${row.status === 'ENABLED' ? 'on' : 'off'}`}
+                      on:click={() => onToggleProfileMod(row)}
+                    >
+                      <span class="toggle-pill"></span>
+                    </button>
+                  {:else}
+                    <span class="status-label">{row.status}</span>
+                  {/if}
+                </div>
               </div>
             </div>
           {/each}
@@ -578,7 +597,7 @@
   .mods-table-head,
   .mods-table-row {
     display: grid;
-    grid-template-columns: 1fr 240px 180px;
+    grid-template-columns: 1fr 240px 260px;
     gap: 16px;
     padding: 10px 0;
     border-bottom: var(--border-subtle);
@@ -599,6 +618,36 @@
 
   .mods-col-status {
     text-align: right;
+  }
+
+  .status-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .status-label {
+    min-width: 112px;
+    text-align: right;
+    color: var(--text-muted);
+  }
+
+  .open-folder-btn {
+    border: 1px solid var(--interactive);
+    background: transparent;
+    color: var(--interactive);
+    border-radius: var(--border-radius);
+    padding: 4px 10px;
+    font-family: var(--font-ui);
+    font-size: 0.85em;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+
+  .open-folder-btn:hover {
+    background: var(--interactive);
+    color: var(--btn-primary-text);
   }
 
   .download-progress {

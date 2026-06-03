@@ -326,6 +326,16 @@
     }
   }
 
+  async function openDownloadsFolder() {
+    try {
+      const path = await invoke('open_downloads_folder', { appId: params.id });
+      addLog(`Opened downloads folder: ${path}`, 'info');
+    } catch (err) {
+      showToast(String(err), 'error');
+      addLog(`Failed to open downloads folder: ${String(err)}`, 'error');
+    }
+  }
+
   async function importPack() {
     try {
       const selected = await open({
@@ -440,6 +450,7 @@
   </section>
 
   <section class="export-bar">
+    <button class="downloads-open-btn" on:click={openDownloadsFolder}>OPEN DOWNLOADS FOLDER</button>
     <button class="import-open-btn" on:click={importPack}>IMPORT ⭳</button>
     <button class="export-open-btn" on:click={openExportPackModal}>EXPORT ⭲</button>
   </section>
@@ -768,6 +779,7 @@
     box-sizing: border-box;
   }
 
+  .downloads-open-btn,
   .import-open-btn,
   .export-open-btn,
   .export-submit-btn,
@@ -782,6 +794,7 @@
     cursor: pointer;
   }
 
+  .downloads-open-btn,
   .import-open-btn,
   .export-open-btn,
   .export-submit-btn {
@@ -791,6 +804,7 @@
     padding: 9px 16px;
   }
 
+  .downloads-open-btn:hover,
   .import-open-btn:hover,
   .export-open-btn:hover,
   .export-submit-btn:hover,

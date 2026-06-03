@@ -944,7 +944,7 @@ pub mod collections {
             .post("https://api.nexusmods.com/v2/graphql")
             .header("apikey", &api_key)
             .header("Accept", "application/json")
-            .header("User-Agent", "CALDERA/0.1.1")
+            .header("User-Agent", "CALDERA/0.2.0")
             .json(&serde_json::json!({
                 "query": query,
                 "variables": { "domainName": game_domain, "slug": slug },
@@ -1012,7 +1012,7 @@ pub mod collections {
             .post("https://api.nexusmods.com/v2/graphql")
             .header("apikey", &api_key)
             .header("Accept", "application/json")
-            .header("User-Agent", "CALDERA/0.1.1")
+            .header("User-Agent", "CALDERA/0.2.0")
             .json(&serde_json::json!({
                 "query": query,
                 "variables": { "revision": revision, "slug": slug, "viewAdultContent": true },
@@ -1103,7 +1103,7 @@ pub mod collections {
             .post("https://api.nexusmods.com/v2/graphql")
             .header("apikey", api_key)
             .header("Accept", "application/json")
-            .header("User-Agent", "CALDERA/0.1.1")
+            .header("User-Agent", "CALDERA/0.2.0")
             .json(&serde_json::json!({ "query": query, "variables": { "domainName": game_domain } }))
             .send()
             .await

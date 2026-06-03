@@ -118,6 +118,16 @@ fn get_modlist_listings(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+fn open_mod_deploy_folder(app_id: String, mod_id: String) -> Result<String, String> {
+    caldera_backend::open_mod_deploy_folder(app_id, mod_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn open_downloads_folder(app_id: String) -> Result<String, String> {
+    caldera_backend::open_downloads_folder(app_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
 fn get_profile_modlist(
     app_id: String,
 ) -> Result<Vec<caldera_backend::config::ProfileModRow>, String> {
@@ -289,6 +299,8 @@ fn main() {
             list_collections,
             fetch_nexus_collections,
             get_modlist_listings,
+            open_downloads_folder,
+            open_mod_deploy_folder,
             get_profile_modlist,
             resolve_deployer_path,
             deploy_mod,
