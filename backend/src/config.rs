@@ -3,7 +3,6 @@ use std::{fs, path::Path};
 
 use crate::GameConfig;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 fn base_config_dir() -> PathBuf {
     crate::runtime::base_config_dir()
@@ -85,149 +84,27 @@ struct ManifestFileView {
     target: String,
 }
 
-fn slugify_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_dash = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
-}
-
-fn nexus_domain_for_name(name: &str) -> String {
-    name.chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .map(|ch| ch.to_ascii_lowercase())
-        .collect()
-}
-
-fn value_string(value: &Value, path: &[&str]) -> Option<String> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_str().map(str::to_string)
-}
-
-fn value_number(value: &Value, path: &[&str]) -> Option<f64> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_f64()
-}
-
-fn selected_file<'a>(metadata: &'a Value, file_id: &str) -> Option<&'a Value> {
-    metadata
-        .get("files")
-        .and_then(|files| files.get("files"))
-        .and_then(Value::as_array)
-        .and_then(|files| {
-            files.iter().find(|file| {
-                file.get("file_id")
-                    .and_then(Value::as_i64)
-                    .map(|id| id.to_string() == file_id)
-                    .unwrap_or(false)
-            })
-        })
-}
-
 fn collect_queued_nexus_listings(game_name: &str, out: &mut Vec<ModListing>) -> Result<(), String> {
-    let domain = nexus_domain_for_name(game_name);
-    if domain.is_empty() {
-        return Ok(());
-    }
-
-    let root = base_config_dir().join("cache").join(&domain);
-    if !root.exists() || !root.is_dir() {
-        return Ok(());
-    }
-
-    let entries = fs::read_dir(&root)
-        .map_err(|e| format!("Failed reading Nexus cache dir {}: {}", root.display(), e))?;
-    for entry in entries.flatten() {
-        let meta_path = entry.path().join("meta.json");
-        if !meta_path.is_file() {
-            continue;
-        }
-
-        let raw = match fs::read_to_string(&meta_path) {
-            Ok(raw) => raw,
-            Err(_) => continue,
-        };
-        let metadata = match serde_json::from_str::<Value>(&raw) {
-            Ok(metadata) => metadata,
-            Err(_) => continue,
-        };
-
-        let mod_id = value_number(&metadata, &["mod", "mod_id"])
-            .map(|id| id.trunc().to_string())
-            .or_else(|| entry.file_name().to_str().map(str::to_string))
-            .unwrap_or_else(|| "unknown".to_string());
-        let file_id = value_string(&metadata, &["download", "file_id"]);
-        let file = file_id
-            .as_deref()
-            .and_then(|id| selected_file(&metadata, id));
-        let name = file
-            .and_then(|f| value_string(f, &["file_name"]))
-            .or_else(|| file.and_then(|f| value_string(f, &["name"])))
-            .or_else(|| value_string(&metadata, &["mod", "name"]))
-            .unwrap_or_else(|| format!("Nexus mod {}", mod_id));
-
-        out.push(ModListing {
-            mod_id: format!(
-                "nexus-{}-{}-{}",
-                domain,
-                mod_id,
-                file_id.clone().unwrap_or_else(|| "unknown".to_string())
-            ),
-            name,
-            status: "downloading".to_string(),
-            source_path: Some(meta_path.to_string_lossy().to_string()),
-            deployable: false,
-            deployer_reason: Some("Download still in progress".to_string()),
-            added_at: value_string(&metadata, &["download", "queued_at"]),
-            progress: Some(0.0),
-            speed: None,
-            version: file
-                .and_then(|f| value_string(f, &["version"]))
-                .or_else(|| value_string(&metadata, &["mod", "version"])),
-            author: value_string(&metadata, &["mod", "author"])
-                .or_else(|| value_string(&metadata, &["mod", "uploaded_by"])),
-            description: file
-                .and_then(|f| value_string(f, &["description"]))
-                .or_else(|| value_string(&metadata, &["mod", "description"])),
-            summary: value_string(&metadata, &["mod", "summary"]),
-            source: Some("nexus".to_string()),
-            source_url: value_string(&metadata, &["download", "url"]),
-            nexus_mod_id: value_number(&metadata, &["mod", "mod_id"]),
-            nexus_file_id: file_id.and_then(|id| id.parse::<f64>().ok()),
-            categories: Vec::new(),
-            tags: Vec::new(),
-            file_size: file.and_then(|f| value_number(f, &["size_in_bytes"])),
-            file_count: None,
-            file_types: Vec::new(),
-            user_notes: None,
-            favorite: None,
-            files: Vec::new(),
-        });
-    }
-
+    let _ = (game_name, out);
     Ok(())
 }
 
 fn listing_roots(game_name: &str, app_id: &str) -> Vec<PathBuf> {
-    let key = format!("{}-{}", slugify_name(game_name), app_id);
-    vec![
-        // Canonical game folder
-        base_config_dir().join("downloads").join(key),
-    ]
+    let _ = game_name;
+    vec![base_config_dir().join("library").join(app_id).join("mods")]
+}
+
+fn parse_listing_file(raw: &str, path: &Path) -> Option<ModListing> {
+    if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+    {
+        serde_json::from_str::<ModListing>(raw).ok()
+    } else {
+        toml::from_str::<ModListing>(raw).ok()
+    }
 }
 
 fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), String> {
@@ -238,6 +115,73 @@ fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), S
         .map_err(|e| format!("Failed reading listings dir {}: {}", dir.display(), e))?;
     for entry in entries.flatten() {
         let p = entry.path();
+        if p.is_dir() {
+            let mod_id = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown-mod")
+                .to_string();
+            let meta_path = p.join("meta.toml");
+            if meta_path.is_file() {
+                if let Ok(raw) = fs::read_to_string(&meta_path) {
+                    if let Some(mut parsed) = parse_listing_file(&raw, &meta_path) {
+                        if parsed.source_path.is_none() {
+                            parsed.source_path =
+                                Some(p.join("files").to_string_lossy().to_string());
+                        }
+                        if parsed.files.is_empty() {
+                            if let Ok(files) = fs::read_dir(p.join("files")) {
+                                parsed.files = files
+                                    .flatten()
+                                    .filter_map(|entry| {
+                                        entry.file_name().to_str().map(str::to_string)
+                                    })
+                                    .collect();
+                            }
+                        }
+                        out.push(parsed);
+                        continue;
+                    }
+                }
+            }
+
+            let files = fs::read_dir(p.join("files"))
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            out.push(ModListing {
+                mod_id: mod_id.clone(),
+                name: mod_id,
+                status: "downloaded".to_string(),
+                source_path: Some(p.join("files").to_string_lossy().to_string()),
+                deployable: false,
+                deployer_reason: None,
+                added_at: None,
+                progress: Some(1.0),
+                speed: Some("0 KB/S".to_string()),
+                version: None,
+                author: None,
+                description: None,
+                summary: None,
+                source: Some("local".to_string()),
+                source_url: None,
+                nexus_mod_id: None,
+                nexus_file_id: None,
+                categories: Vec::new(),
+                tags: Vec::new(),
+                file_size: None,
+                file_count: Some(files.len() as f64),
+                file_types: Vec::new(),
+                user_notes: None,
+                favorite: None,
+                files,
+            });
+            continue;
+        }
         if !p.is_file() {
             continue;
         }
@@ -251,7 +195,7 @@ fn maybe_collect_from_dir(dir: &Path, out: &mut Vec<ModListing>) -> Result<(), S
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            if let Ok(mut parsed) = serde_json::from_str::<ModListing>(&raw) {
+            if let Some(mut parsed) = parse_listing_file(&raw, &p) {
                 if parsed.source_path.is_none() {
                     parsed.source_path = Some(p.to_string_lossy().to_string());
                 }
@@ -324,7 +268,7 @@ pub fn get_modlist_listings(app_id: String) -> Result<Vec<ModListing>, String> {
 
 fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool), String> {
     let manifest_path = base_config_dir()
-        .join("cache")
+        .join("library")
         .join(app_id)
         .join("mods")
         .join(mod_id)
@@ -343,27 +287,24 @@ fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool),
         return Ok(("UNKNOWN".to_string(), false));
     }
 
-    let mut all_enabled = true;
-    let mut all_disabled = true;
+    let mut all_linked = true;
+    let mut all_unlinked = true;
 
     for f in manifest.files {
-        let enabled_path = PathBuf::from(&f.target);
-        let disabled_path = PathBuf::from(format!("{}.disabled", f.target));
+        let target = PathBuf::from(&f.target);
+        let linked = target.symlink_metadata().is_ok();
 
-        let enabled_exists = enabled_path.exists();
-        let disabled_exists = disabled_path.exists();
-
-        if !enabled_exists {
-            all_enabled = false;
+        if !linked {
+            all_linked = false;
         }
-        if !disabled_exists {
-            all_disabled = false;
+        if linked {
+            all_unlinked = false;
         }
     }
 
-    if all_enabled {
+    if all_linked {
         Ok(("ENABLED".to_string(), true))
-    } else if all_disabled {
+    } else if all_unlinked {
         Ok(("DISABLED".to_string(), true))
     } else {
         Ok(("UNKNOWN".to_string(), false))

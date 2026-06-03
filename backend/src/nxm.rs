@@ -310,23 +310,10 @@ async fn fetch_nexus_json(
         .map_err(|e| format!("Invalid Nexus JSON: {}", e))
 }
 
-fn write_metadata(link: &NxmLink, metadata: &Value) -> Result<(), String> {
-    let cache_dir = crate::runtime::base_config_dir()
-        .join("cache")
-        .join(&link.game_domain)
-        .join(link.mod_id.to_string());
-    fs::create_dir_all(&cache_dir).map_err(|e| {
-        format!(
-            "Failed creating metadata cache {}: {}",
-            cache_dir.display(),
-            e
-        )
-    })?;
-    let meta_path = cache_dir.join("meta.json");
-    let body = serde_json::to_string_pretty(metadata)
-        .map_err(|e| format!("Failed serializing Nexus metadata: {}", e))?;
-    fs::write(&meta_path, body)
-        .map_err(|e| format!("Failed writing metadata {}: {}", meta_path.display(), e))
+fn write_metadata(link: &NxmLink, _metadata: &Value) -> Result<(), String> {
+    let mod_dir = mod_root_for_link(link)?;
+    fs::create_dir_all(mod_dir.join("files"))
+        .map_err(|e| format!("Failed creating mod storage {}: {}", mod_dir.display(), e))
 }
 
 fn append_queue_item(link: &NxmLink, metadata: &Value) -> Result<(), String> {
@@ -369,21 +356,6 @@ fn first_download_uri(links: &Value) -> Option<String> {
         })
         .and_then(Value::as_str)
         .map(str::to_string)
-}
-
-fn slugify_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_dash = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
 }
 
 fn nexus_domain_for_name(name: &str) -> String {
@@ -447,12 +419,17 @@ fn safe_file_name(name: &str) -> String {
     }
 }
 
-fn download_dir_for_domain(game_domain: &str) -> Result<PathBuf, String> {
-    let cache_root = crate::runtime::base_config_dir().join("cache");
-    let entries = fs::read_dir(&cache_root)
-        .map_err(|e| format!("Failed reading cache dir {}: {}", cache_root.display(), e))?;
+fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, String> {
+    let library_root = crate::runtime::base_config_dir().join("library");
+    let entries = fs::read_dir(&library_root).map_err(|e| {
+        format!(
+            "Failed reading library dir {}: {}",
+            library_root.display(),
+            e
+        )
+    })?;
     for entry in entries.flatten() {
-        let meta_path = entry.path().join("meta.json");
+        let meta_path = entry.path().join("metadata").join("meta.json");
         if !meta_path.is_file() {
             continue;
         }
@@ -472,8 +449,8 @@ fn download_dir_for_domain(game_domain: &str) -> Result<PathBuf, String> {
         };
         if nexus_domain_for_name(&name) == game_domain {
             return Ok(crate::runtime::base_config_dir()
-                .join("downloads")
-                .join(format!("{}-{}", slugify_name(&name), app_id)));
+                .join("library")
+                .join(app_id));
         }
     }
 
@@ -483,11 +460,25 @@ fn download_dir_for_domain(game_domain: &str) -> Result<PathBuf, String> {
     ))
 }
 
-fn listing_path(link: &NxmLink) -> Result<PathBuf, String> {
-    Ok(download_dir_for_domain(&link.game_domain)?.join(format!(
-        "nexus-{}-{}-{}.json",
+fn storage_mod_id(link: &NxmLink) -> String {
+    format!(
+        "nexus-{}-{}-{}",
         link.game_domain, link.mod_id, link.file_id
-    )))
+    )
+}
+
+fn mod_root_for_link(link: &NxmLink) -> Result<PathBuf, String> {
+    Ok(library_root_for_domain(&link.game_domain)?
+        .join("mods")
+        .join(storage_mod_id(link)))
+}
+
+fn download_dir_for_link(link: &NxmLink) -> Result<PathBuf, String> {
+    Ok(mod_root_for_link(link)?.join("files"))
+}
+
+fn listing_path(link: &NxmLink) -> Result<PathBuf, String> {
+    Ok(mod_root_for_link(link)?.join("meta.toml"))
 }
 
 fn write_listing(
@@ -503,13 +494,10 @@ fn write_listing(
         .parent()
         .ok_or_else(|| format!("Invalid listing path {}", path.display()))?;
     fs::create_dir_all(parent)
-        .map_err(|e| format!("Failed creating downloads dir {}: {}", parent.display(), e))?;
+        .map_err(|e| format!("Failed creating mod dir {}: {}", parent.display(), e))?;
     let file = selected_file(metadata, link.file_id);
     let listing = crate::config::ModListing {
-        mod_id: format!(
-            "nexus-{}-{}-{}",
-            link.game_domain, link.mod_id, link.file_id
-        ),
+        mod_id: storage_mod_id(link),
         name: selected_file_name(metadata, link.file_id, fallback_name),
         status: status.to_string(),
         source_path,
@@ -547,12 +535,12 @@ fn write_listing(
 fn read_listing(path: &PathBuf) -> Result<crate::config::ModListing, String> {
     let raw = fs::read_to_string(path)
         .map_err(|e| format!("Failed reading listing {}: {}", path.display(), e))?;
-    serde_json::from_str::<crate::config::ModListing>(&raw)
-        .map_err(|e| format!("Invalid listing JSON {}: {}", path.display(), e))
+    toml::from_str::<crate::config::ModListing>(&raw)
+        .map_err(|e| format!("Invalid listing TOML {}: {}", path.display(), e))
 }
 
 fn write_listing_value(path: &PathBuf, listing: &crate::config::ModListing) -> Result<(), String> {
-    let body = serde_json::to_string_pretty(listing)
+    let body = toml::to_string_pretty(listing)
         .map_err(|e| format!("Failed serializing listing: {}", e))?;
     fs::write(path, body).map_err(|e| format!("Failed writing listing {}: {}", path.display(), e))
 }
@@ -595,7 +583,7 @@ async fn download_archive(
 ) -> Result<PathBuf, String> {
     let download_url = value_string(metadata, &["download", "resolved_uri"])
         .ok_or_else(|| "No resolved Nexus download URL".to_string())?;
-    let download_dir = download_dir_for_domain(&link.game_domain)?;
+    let download_dir = download_dir_for_link(link)?;
     fs::create_dir_all(&download_dir).map_err(|e| {
         format!(
             "Failed creating download dir {}: {}",

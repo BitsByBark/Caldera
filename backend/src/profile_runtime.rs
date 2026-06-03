@@ -10,19 +10,21 @@ use crate::profile_format::{
     serialize_profile, CalderaProfile, ConflictRule, ModEntry, ProfileMeta,
 };
 
-fn slugify_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_dash = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
+fn safe_profile_name(name: &str) -> String {
+    let mut out = String::new();
+    for ch in name.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else if !out.ends_with('_') {
+            out.push('_');
         }
     }
-    out.trim_matches('-').to_string()
+    let out = out.trim_matches('_').to_string();
+    if out.is_empty() {
+        "DEFAULT".to_string()
+    } else {
+        out
+    }
 }
 
 fn now_iso() -> String {
@@ -32,14 +34,14 @@ fn now_iso() -> String {
 }
 
 pub fn metadata_game_dir(app_id: &str) -> Result<PathBuf, String> {
-    let meta = crate::deployer::read_game_meta(app_id)?;
     Ok(crate::runtime::base_config_dir()
-        .join("metadata")
-        .join(format!("{}-{}", slugify_name(&meta.name), app_id)))
+        .join("library")
+        .join(app_id)
+        .join("profiles"))
 }
 
 pub fn profile_path(app_id: &str) -> Result<PathBuf, String> {
-    Ok(metadata_game_dir(app_id)?.join("profile.profile"))
+    Ok(metadata_game_dir(app_id)?.join(format!("{}.cldr", safe_profile_name("DEFAULT"))))
 }
 
 fn init_profile(name: &str, deployer: &str) -> CalderaProfile {

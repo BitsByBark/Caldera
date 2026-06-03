@@ -117,32 +117,21 @@ async fn queue_download(
         }
     });
 
-    let cache_dir = crate::runtime::base_config_dir()
-        .join("cache")
-        .join(&payload.game_domain)
-        .join(&payload.mod_id);
-    fs::create_dir_all(&cache_dir).map_err(|e| {
+    let mod_root = mod_root_for_payload(&payload)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "No configured game matches Nexus domain {}",
+                    payload.game_domain
+                ),
+            )
+        })?;
+    fs::create_dir_all(mod_root.join("files")).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!(
-                "Failed creating metadata cache {}: {}",
-                cache_dir.display(),
-                e
-            ),
-        )
-    })?;
-
-    let meta_path = cache_dir.join("meta.json");
-    let body = serde_json::to_string_pretty(&metadata).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed serializing Nexus metadata: {}", e),
-        )
-    })?;
-    fs::write(&meta_path, body).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed writing metadata {}: {}", meta_path.display(), e),
+            format!("Failed creating mod storage {}: {}", mod_root.display(), e),
         )
     })?;
 
@@ -224,21 +213,6 @@ async fn queue_download(
     Ok(())
 }
 
-fn slugify_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_dash = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
-}
-
 fn nexus_domain_for_name(name: &str) -> String {
     name.chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
@@ -277,16 +251,21 @@ fn selected_file<'a>(metadata: &'a Value, file_id: &str) -> Option<&'a Value> {
         })
 }
 
-fn matching_game_download_dir(game_domain: &str) -> Result<Option<PathBuf>, String> {
-    let cache_root = crate::runtime::base_config_dir().join("cache");
-    if !cache_root.is_dir() {
+fn matching_game_library_dir(game_domain: &str) -> Result<Option<PathBuf>, String> {
+    let library_root = crate::runtime::base_config_dir().join("library");
+    if !library_root.is_dir() {
         return Ok(None);
     }
 
-    let entries = fs::read_dir(&cache_root)
-        .map_err(|e| format!("Failed reading cache dir {}: {}", cache_root.display(), e))?;
+    let entries = fs::read_dir(&library_root).map_err(|e| {
+        format!(
+            "Failed reading library dir {}: {}",
+            library_root.display(),
+            e
+        )
+    })?;
     for entry in entries.flatten() {
-        let meta_path = entry.path().join("meta.json");
+        let meta_path = entry.path().join("metadata").join("meta.json");
         if !meta_path.is_file() {
             continue;
         }
@@ -310,12 +289,28 @@ fn matching_game_download_dir(game_domain: &str) -> Result<Option<PathBuf>, Stri
 
         return Ok(Some(
             crate::runtime::base_config_dir()
-                .join("downloads")
-                .join(format!("{}-{}", slugify_name(&name), app_id)),
+                .join("library")
+                .join(app_id),
         ));
     }
 
     Ok(None)
+}
+
+fn storage_mod_id(payload: &DownloadRequest) -> String {
+    format!(
+        "nexus-{}-{}-{}",
+        payload.game_domain, payload.mod_id, payload.file_id
+    )
+}
+
+fn mod_root_for_payload(payload: &DownloadRequest) -> Result<Option<PathBuf>, String> {
+    Ok(matching_game_library_dir(&payload.game_domain)?
+        .map(|root| root.join("mods").join(storage_mod_id(payload))))
+}
+
+fn files_dir_for_payload(payload: &DownloadRequest) -> Result<Option<PathBuf>, String> {
+    Ok(mod_root_for_payload(payload)?.map(|root| root.join("files")))
 }
 
 fn write_downloading_listing(
@@ -323,14 +318,14 @@ fn write_downloading_listing(
     metadata: &Value,
     fallback_name: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let Some(download_dir) = matching_game_download_dir(&payload.game_domain)? else {
+    let Some(mod_root) = mod_root_for_payload(payload)? else {
         return Ok(None);
     };
 
-    fs::create_dir_all(&download_dir).map_err(|e| {
+    fs::create_dir_all(mod_root.join("files")).map_err(|e| {
         format!(
-            "Failed creating downloads dir {}: {}",
-            download_dir.display(),
+            "Failed creating mod storage dir {}: {}",
+            mod_root.display(),
             e
         )
     })?;
@@ -341,10 +336,7 @@ fn write_downloading_listing(
         .or_else(|| file.and_then(|f| value_string(f, &["name"])))
         .unwrap_or_else(|| fallback_name.to_string());
     let listing = crate::config::ModListing {
-        mod_id: format!(
-            "nexus-{}-{}-{}",
-            payload.game_domain, payload.mod_id, payload.file_id
-        ),
+        mod_id: storage_mod_id(payload),
         name,
         status: "downloading".to_string(),
         source_path: Some(payload.url.clone()),
@@ -375,11 +367,8 @@ fn write_downloading_listing(
         favorite: None,
         files: Vec::new(),
     };
-    let path = download_dir.join(format!(
-        "nexus-{}-{}-{}.json",
-        payload.game_domain, payload.mod_id, payload.file_id
-    ));
-    let body = serde_json::to_string_pretty(&listing)
+    let path = mod_root.join("meta.toml");
+    let body = toml::to_string_pretty(&listing)
         .map_err(|e| format!("Failed serializing listing: {}", e))?;
     fs::write(&path, body)
         .map_err(|e| format!("Failed writing listing {}: {}", path.display(), e))?;
@@ -447,7 +436,7 @@ async fn download_archive(
     metadata: &Value,
     fallback_name: &str,
 ) -> Result<PathBuf, (StatusCode, String)> {
-    let Some(download_dir) = matching_game_download_dir(&payload.game_domain).map_err(|e| {
+    let Some(download_dir) = files_dir_for_payload(payload).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed resolving download dir: {}", e),
@@ -467,7 +456,7 @@ async fn download_archive(
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
-                "Failed creating downloads dir {}: {}",
+                "Failed creating mod files dir {}: {}",
                 download_dir.display(),
                 e
             ),
@@ -542,8 +531,8 @@ async fn download_archive(
 fn mark_listing_downloaded(listing_path: &PathBuf, file_path: &PathBuf) -> Result<(), String> {
     let raw = fs::read_to_string(listing_path)
         .map_err(|e| format!("Failed reading listing {}: {}", listing_path.display(), e))?;
-    let mut listing = serde_json::from_str::<crate::config::ModListing>(&raw)
-        .map_err(|e| format!("Invalid listing JSON {}: {}", listing_path.display(), e))?;
+    let mut listing = toml::from_str::<crate::config::ModListing>(&raw)
+        .map_err(|e| format!("Invalid listing TOML {}: {}", listing_path.display(), e))?;
     listing.status = "downloaded".to_string();
     listing.source_path = Some(file_path.to_string_lossy().to_string());
     listing.progress = Some(1.0);
@@ -553,7 +542,7 @@ fn mark_listing_downloaded(listing_path: &PathBuf, file_path: &PathBuf) -> Resul
         .and_then(|name| name.to_str())
         .map(|name| vec![name.to_string()])
         .unwrap_or_default();
-    let body = serde_json::to_string_pretty(&listing)
+    let body = toml::to_string_pretty(&listing)
         .map_err(|e| format!("Failed serializing listing: {}", e))?;
     fs::write(listing_path, body)
         .map_err(|e| format!("Failed writing listing {}: {}", listing_path.display(), e))
@@ -562,12 +551,12 @@ fn mark_listing_downloaded(listing_path: &PathBuf, file_path: &PathBuf) -> Resul
 fn mark_listing_failed(listing_path: &PathBuf, error: &str) -> Result<(), String> {
     let raw = fs::read_to_string(listing_path)
         .map_err(|e| format!("Failed reading listing {}: {}", listing_path.display(), e))?;
-    let mut listing = serde_json::from_str::<crate::config::ModListing>(&raw)
-        .map_err(|e| format!("Invalid listing JSON {}: {}", listing_path.display(), e))?;
+    let mut listing = toml::from_str::<crate::config::ModListing>(&raw)
+        .map_err(|e| format!("Invalid listing TOML {}: {}", listing_path.display(), e))?;
     listing.status = "failed".to_string();
     listing.deployer_reason = Some(error.to_string());
     listing.progress = Some(0.0);
-    let body = serde_json::to_string_pretty(&listing)
+    let body = toml::to_string_pretty(&listing)
         .map_err(|e| format!("Failed serializing listing: {}", e))?;
     fs::write(listing_path, body)
         .map_err(|e| format!("Failed writing listing {}: {}", listing_path.display(), e))

@@ -86,18 +86,18 @@ fn now_iso() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-fn cache_root(app_id: &str) -> PathBuf {
-    base_config_dir().join("cache").join(app_id)
+fn library_root(app_id: &str) -> PathBuf {
+    base_config_dir().join("library").join(app_id)
 }
 
 fn cache_profile_path(app_id: &str, profile_name: &str) -> PathBuf {
-    cache_root(app_id)
+    library_root(app_id)
         .join("profiles")
-        .join(format!("{}.toml", safe_name(profile_name)))
+        .join(format!("{}.cldr", safe_name(profile_name)))
 }
 
 fn mod_dir(app_id: &str, mod_id: &str) -> PathBuf {
-    cache_root(app_id).join("mods").join(mod_id)
+    library_root(app_id).join("mods").join(mod_id)
 }
 
 fn safe_name(name: &str) -> String {
@@ -156,9 +156,12 @@ fn manifest_enabled(app_id: &str, mod_id: &str) -> Result<bool, String> {
     if files.is_empty() {
         return Ok(true);
     }
-    Ok(files
-        .iter()
-        .any(|f| f.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true)))
+    Ok(files.iter().any(|f| {
+        f.get("linked")
+            .or_else(|| f.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+    }))
 }
 
 fn mod_meta_toml(entry: &crate::profile_format::ModEntry) -> Result<String, String> {
@@ -211,7 +214,7 @@ fn read_or_make_manifest(app_id: &str, mod_id: &str) -> Result<String, String> {
 }
 
 fn bundled_files(app_id: &str, mod_id: &str) -> Result<Vec<PathBuf>, String> {
-    let dir = mod_dir(app_id, mod_id);
+    let dir = mod_dir(app_id, mod_id).join("files");
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -638,7 +641,7 @@ pub mod import {
         mod_id: &str,
         entries: &HashMap<String, Vec<u8>>,
     ) -> Result<(), String> {
-        let dir = mod_dir(app_id, mod_id);
+        let dir = mod_dir(app_id, mod_id).join("files");
         fs::create_dir_all(&dir)
             .map_err(|e| format!("Failed creating mod dir {}: {}", dir.display(), e))?;
         for name in ["meta.toml", "manifest.json"] {
@@ -677,7 +680,7 @@ pub mod import {
         failed_mods: &HashSet<String>,
         entries: &HashMap<String, Vec<u8>>,
     ) -> Result<(), String> {
-        let path = base_config_dir().join("registry.caldera");
+        let path = base_config_dir().join("registry.cldr");
         let mut registry = if path.exists() {
             let raw = fs::read_to_string(&path)
                 .map_err(|e| format!("Failed reading registry {}: {}", path.display(), e))?;

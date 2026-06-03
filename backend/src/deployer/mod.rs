@@ -42,7 +42,8 @@ pub struct ModManifest {
 pub struct DeployedFile {
     pub name: String,
     pub target: String,
-    pub enabled: bool,
+    #[serde(default, alias = "enabled")]
+    pub linked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +69,8 @@ struct RegistryMod {
 struct RegistryFileEntry {
     name: String,
     target: String,
-    enabled: bool,
+    #[serde(default, alias = "enabled")]
+    linked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,12 +126,16 @@ fn base_config_dir() -> PathBuf {
     crate::runtime::base_config_dir()
 }
 
-fn cache_root(app_id: &str) -> PathBuf {
-    base_config_dir().join("cache").join(app_id)
+fn library_root(app_id: &str) -> PathBuf {
+    base_config_dir().join("library").join(app_id)
 }
 
 fn mod_storage_dir(app_id: &str, mod_id: &str) -> PathBuf {
-    cache_root(app_id).join("mods").join(mod_id)
+    library_root(app_id).join("mods").join(mod_id)
+}
+
+fn mod_files_dir(app_id: &str, mod_id: &str) -> PathBuf {
+    mod_storage_dir(app_id, mod_id).join("files")
 }
 
 fn manifest_path(app_id: &str, mod_id: &str) -> PathBuf {
@@ -137,15 +143,15 @@ fn manifest_path(app_id: &str, mod_id: &str) -> PathBuf {
 }
 
 fn registry_path() -> PathBuf {
-    base_config_dir().join("registry.caldera")
+    base_config_dir().join("registry.cldr")
 }
 
 fn game_cache_config_path(app_id: &str) -> PathBuf {
-    cache_root(app_id).join("config.toml")
+    library_root(app_id).join("metadata").join("config.toml")
 }
 
 fn game_meta_path(app_id: &str) -> PathBuf {
-    cache_root(app_id).join("meta.json")
+    library_root(app_id).join("metadata").join("meta.json")
 }
 
 fn rfc3339_now_utc() -> Option<String> {
@@ -205,6 +211,58 @@ fn save_manifest(app_id: &str, mod_id: &str, manifest: &ModManifest) -> Result<(
     let body = serde_json::to_string_pretty(manifest)
         .map_err(|e| format!("Failed serializing manifest: {}", e))?;
     fs::write(&p, body).map_err(|e| format!("Failed writing manifest {}: {}", p.display(), e))
+}
+
+#[cfg(unix)]
+fn create_file_link(
+    source: &Path,
+    target: &Path,
+    _logger: &impl DeployLogger,
+) -> Result<(), String> {
+    std::os::unix::fs::symlink(source, target).map_err(|e| {
+        format!(
+            "Failed linking {} -> {}: {}",
+            target.display(),
+            source.display(),
+            e
+        )
+    })
+}
+
+#[cfg(windows)]
+fn create_file_link(
+    source: &Path,
+    target: &Path,
+    logger: &impl DeployLogger,
+) -> Result<(), String> {
+    match std::os::windows::fs::symlink_file(source, target) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            // TODO: request elevation via Tauri, then retry the symlink.
+            logger.error("Symlinks require admin rights or Developer Mode — enable Developer Mode in Windows Settings > For Developers");
+            Err("Symlinks require admin rights or Developer Mode — enable Developer Mode in Windows Settings > For Developers".to_string())
+        }
+        Err(e) => Err(format!(
+            "Failed linking {} -> {}: {}",
+            target.display(),
+            source.display(),
+            e
+        )),
+    }
+}
+
+fn remove_link_if_present(target: &Path) -> Result<bool, String> {
+    if target.symlink_metadata().is_ok() {
+        fs::remove_file(target)
+            .map_err(|e| format!("Failed removing symlink {}: {}", target.display(), e))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn source_file_path(app_id: &str, mod_id: &str, name: &str) -> PathBuf {
+    mod_files_dir(app_id, mod_id).join(name)
 }
 
 pub fn read_game_meta(app_id: &str) -> Result<GameMeta, String> {
@@ -493,7 +551,7 @@ fn update_registry_from_manifest(
             .map(|f| RegistryFileEntry {
                 name: f.name.clone(),
                 target: f.target.clone(),
-                enabled: f.enabled,
+                linked: f.linked,
             })
             .collect(),
         deployed_at: manifest.deployed_at.clone(),
@@ -520,13 +578,15 @@ pub fn recover_registry_state(app_id: &str, logger: &impl DeployLogger) -> Resul
     for (mod_id, mod_entry) in &mut game.mods {
         for file in &mut mod_entry.files {
             let target = PathBuf::from(&file.target);
-            let disabled = PathBuf::from(format!("{}.disabled", file.target));
-            if target.exists() {
-                file.enabled = true;
-            } else if disabled.exists() {
-                file.enabled = false;
+            let source = source_file_path(app_id, mod_id, &file.name);
+            if target.symlink_metadata().is_ok() {
+                file.linked = true;
+            } else if source.exists() {
+                file.linked = false;
+                logger.warning(&format!("Mod {} is undeployed", file.name));
             } else {
-                logger.warning(&format!("Missing deployed files for {}", mod_id));
+                file.linked = false;
+                logger.error(&format!("Missing source file for {}", file.name));
             }
         }
 
@@ -540,7 +600,7 @@ pub fn recover_registry_state(app_id: &str, logger: &impl DeployLogger) -> Resul
                 .map(|f| DeployedFile {
                     name: f.name.clone(),
                     target: f.target.clone(),
-                    enabled: f.enabled,
+                    linked: f.linked,
                 })
                 .collect(),
             deployed_at: mod_entry.deployed_at.clone(),
@@ -602,12 +662,12 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
 
     logger.info(&format!("Deploying to {}", target_dir.display()));
 
-    let source_dir = mod_storage_dir(&app_id, &mod_id);
+    let source_dir = mod_files_dir(&app_id, &mod_id);
     let files = gather_mod_files(&source_dir, &cfg)?;
     logger.info(&format!("Found {} pak file(s)", files.len()));
 
     let mut deployed_files: Vec<DeployedFile> = Vec::new();
-    let mut copied_count = 0usize;
+    let mut linked_count = 0usize;
 
     for src in files {
         let Some(name) = src.file_name().and_then(|n| n.to_str()) else {
@@ -620,21 +680,14 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
             continue;
         }
 
-        fs::copy(&src, &target).map_err(|e| {
-            format!(
-                "Failed copying {} to {}: {}",
-                src.display(),
-                target.display(),
-                e
-            )
-        })?;
+        create_file_link(&src, &target, &logger)?;
 
-        copied_count += 1;
-        logger.success(&format!("Copied {}", name));
+        linked_count += 1;
+        logger.success(&format!("Linked {}", name));
         deployed_files.push(DeployedFile {
             name: name.to_string(),
             target: target.to_string_lossy().to_string(),
-            enabled: true,
+            linked: true,
         });
     }
 
@@ -649,8 +702,8 @@ pub fn deploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<Mod
     save_manifest(&app_id, &mod_id, &manifest)?;
     update_registry_from_manifest(&app_id, &mod_id, &manifest)?;
     logger.success(&format!(
-        "Deployment complete — {} files copied",
-        copied_count
+        "Deployment complete — {} files linked",
+        linked_count
     ));
 
     Ok(manifest)
@@ -669,30 +722,19 @@ pub fn undeploy_mod(app: &AppHandle, app_id: String, mod_id: String) -> Result<(
         return Ok(());
     };
 
-    if manifest.deployed {
-        for f in &manifest.files {
-            let target = PathBuf::from(&f.target);
-            let disabled = PathBuf::from(format!("{}.disabled", f.target));
-
-            if target.exists() {
-                fs::remove_file(&target)
-                    .map_err(|e| format!("Failed removing {}: {}", target.display(), e))?;
-                logger.info(&format!("Removed {}", f.name));
-            } else if disabled.exists() {
-                fs::remove_file(&disabled)
-                    .map_err(|e| format!("Failed removing {}: {}", disabled.display(), e))?;
-                logger.info(&format!("Removed {}", f.name));
-            }
+    for f in &mut manifest.files {
+        let target = PathBuf::from(&f.target);
+        if remove_link_if_present(&target)? {
+            logger.info(&format!("Removed {}", f.name));
         }
+        f.linked = false;
     }
 
     manifest.deployed = false;
-    manifest.target_folder = String::new();
-    manifest.files.clear();
     manifest.deployed_at = None;
 
     save_manifest(&app_id, &mod_id, &manifest)?;
-    remove_registry_mod(&app_id, &mod_id)?;
+    update_registry_from_manifest(&app_id, &mod_id, &manifest)?;
     logger.success("Mod removed");
 
     Ok(())
@@ -714,42 +756,35 @@ pub fn toggle_mod(
         return Err("Mod manifest not found".to_string());
     };
 
-    if !manifest.deployed {
-        return Err("Mod is not deployed".to_string());
+    if manifest.files.is_empty() {
+        return Err("Mod manifest has no files".to_string());
     }
 
     for f in &mut manifest.files {
-        let active = PathBuf::from(&f.target);
-        let disabled_path = PathBuf::from(format!("{}.disabled", f.target));
+        let target = PathBuf::from(&f.target);
+        let source = source_file_path(&app_id, &mod_id, &f.name);
 
         if enabled {
-            if disabled_path.exists() {
-                fs::rename(&disabled_path, &active).map_err(|e| {
-                    format!(
-                        "Failed enabling {} ({} -> {}): {}",
-                        f.name,
-                        disabled_path.display(),
-                        active.display(),
-                        e
-                    )
-                })?;
+            if !source.exists() {
+                logger.error(&format!("Missing source file for {}", f.name));
+                return Err(format!("Missing source file for {}", f.name));
             }
-            f.enabled = true;
+            if target.symlink_metadata().is_err() {
+                create_file_link(&source, &target, &logger)?;
+            }
+            f.linked = true;
         } else {
-            if active.exists() {
-                fs::rename(&active, &disabled_path).map_err(|e| {
-                    format!(
-                        "Failed disabling {} ({} -> {}): {}",
-                        f.name,
-                        active.display(),
-                        disabled_path.display(),
-                        e
-                    )
-                })?;
-            }
-            f.enabled = false;
+            remove_link_if_present(&target)?;
+            f.linked = false;
         }
     }
+
+    manifest.deployed = enabled;
+    manifest.deployed_at = if enabled {
+        manifest.deployed_at.or_else(rfc3339_now_utc)
+    } else {
+        None
+    };
 
     save_manifest(&app_id, &mod_id, &manifest)?;
     update_registry_from_manifest(&app_id, &mod_id, &manifest)?;
@@ -840,21 +875,25 @@ pub fn deploy_listing(
     ensure_game_not_running(&logger)?;
 
     let mod_id = listing.mod_id.clone();
-    let mod_dir = mod_storage_dir(&app_id, &mod_id);
-    fs::create_dir_all(&mod_dir).map_err(|e| {
+    let files_dir = mod_files_dir(&app_id, &mod_id);
+    fs::create_dir_all(&files_dir).map_err(|e| {
         format!(
             "Failed creating mod staging dir {}: {}",
-            mod_dir.display(),
+            files_dir.display(),
             e
         )
     })?;
 
     let mut copied = 0usize;
     let mut seen = HashSet::new();
-    let source_parent = listing
-        .source_path
-        .as_ref()
-        .and_then(|p| PathBuf::from(p).parent().map(|p| p.to_path_buf()));
+    let source_parent = listing.source_path.as_ref().and_then(|p| {
+        let path = PathBuf::from(p);
+        if path.is_dir() {
+            Some(path)
+        } else {
+            path.parent().map(|p| p.to_path_buf())
+        }
+    });
 
     for file_name in listing_candidate_names(&listing) {
         if !matches_patterns(&file_name, &cfg.file_patterns) {
@@ -887,7 +926,7 @@ pub fn deploy_listing(
         if !src.exists() || !src.is_file() {
             continue;
         }
-        let target = mod_dir.join(&file_name);
+        let target = files_dir.join(&file_name);
         fs::copy(&src, &target).map_err(|e| {
             format!(
                 "Failed staging {} -> {}: {}",

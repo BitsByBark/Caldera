@@ -150,7 +150,7 @@ pub fn toggle_profile_mod(
     enabled: bool,
 ) -> Result<(), String> {
     if !config::profile_contains_mod(&app_id, &mod_id)? {
-        return Err(format!("Mod {} is not in profile.profile", mod_id));
+        return Err(format!("Mod {} is not in the active profile", mod_id));
     }
     deployer::toggle_mod(app, app_id, mod_id, enabled)
 }
