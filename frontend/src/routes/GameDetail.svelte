@@ -428,7 +428,7 @@
       </div>
     {:else}
       <div class="action-left">
-        <button class={`edit-btn ${editMode ? 'active' : ''}`} on:click={toggleEditMode}>
+        <button class="edit-btn" on:click={openProfilePage}>
           {editMode ? '// DONE' : '// EDIT'}
         </button>
       </div>
