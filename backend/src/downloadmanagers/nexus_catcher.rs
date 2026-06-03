@@ -1,10 +1,11 @@
-use std::{fs, io::Write, path::PathBuf};
+use std::{fs, io::Write, path::PathBuf, sync::Arc, sync::OnceLock};
 
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use tokio::sync::{Mutex, Notify};
 
 use crate::{AppError, WithPath};
 
@@ -46,6 +47,60 @@ struct DownloadProgressEvent {
     name: String,
     progress: u8,
     message: String,
+}
+
+struct DownloadGate {
+    active: Mutex<usize>,
+    notify: Notify,
+}
+
+struct DownloadSlot {
+    gate: Arc<DownloadGate>,
+}
+
+impl DownloadSlot {
+    async fn release(self) {
+        let mut active = self.gate.active.lock().await;
+        *active = active.saturating_sub(1);
+        drop(active);
+        self.gate.notify.notify_one();
+    }
+}
+
+static DOWNLOAD_GATE: OnceLock<Arc<DownloadGate>> = OnceLock::new();
+
+fn download_gate() -> Arc<DownloadGate> {
+    DOWNLOAD_GATE
+        .get_or_init(|| {
+            Arc::new(DownloadGate {
+                active: Mutex::new(0),
+                notify: Notify::new(),
+            })
+        })
+        .clone()
+}
+
+fn parallel_download_limit() -> usize {
+    crate::filehandler::runtime::get_settings_values()
+        .ok()
+        .and_then(|values| values.get("parallel_downloads").and_then(|v| v.as_u64()))
+        .unwrap_or(4)
+        .clamp(1, 16) as usize
+}
+
+async fn acquire_download_slot() -> DownloadSlot {
+    let gate = download_gate();
+    loop {
+        let limit = parallel_download_limit();
+        {
+            let mut active = gate.active.lock().await;
+            if *active < limit {
+                *active += 1;
+                return DownloadSlot { gate: gate.clone() };
+            }
+        }
+        gate.notify.notified().await;
+    }
 }
 
 pub fn parse_nxm(raw: &str) -> Result<NxmLink, AppError> {
@@ -171,30 +226,6 @@ async fn download_mod_link(app: AppHandle, link: NxmLink, url: String) -> Result
 
     let client = reqwest::Client::new();
     let base_url = "https://api.nexusmods.com/v1";
-    let download_links = resolve_download_links(&client, &api_key, &link).await;
-
-    let (links, links_error, resolved_uri) = match download_links {
-        Ok(links) => {
-            emit_log(&app, "Resolved download URL", "success");
-            let resolved_uri = first_download_uri(&links)
-                .map(Value::String)
-                .unwrap_or(Value::Null);
-            (links, Value::Null, resolved_uri)
-        }
-        Err((status, err)) => {
-            emit_log(
-                &app,
-                &format!("Could not resolve download link: {}", status),
-                "warning",
-            );
-            (
-                Value::Null,
-                json!({ "status": status, "error": err }),
-                Value::Null,
-            )
-        }
-    };
-
     let mod_details = fetch_nexus_json(
         &client,
         &api_key,
@@ -233,9 +264,9 @@ async fn download_mod_link(app: AppHandle, link: NxmLink, url: String) -> Result
             "url": url,
             "file_id": link.file_id,
             "queued_at": now,
-            "links": links,
-            "links_error": links_error,
-            "resolved_uri": resolved_uri,
+            "links": Value::Null,
+            "links_error": Value::Null,
+            "resolved_uri": Value::Null,
             "nxm": {
                 "key": link.key,
                 "expires": link.expires,
@@ -251,18 +282,61 @@ async fn download_mod_link(app: AppHandle, link: NxmLink, url: String) -> Result
         .and_then(|m| m.get("name"))
         .and_then(Value::as_str)
         .unwrap_or("unknown mod");
-    let listing_path = write_listing(&link, &metadata, mod_name, 0.0, "downloading", None)?;
-    emit_log(&app, &format!("Download queued: {}", mod_name), "success");
+    let listing_path = write_listing(&link, &metadata, mod_name, 0.0, "queued", None)?;
     emit_download_event(&app, &link, mod_name);
-    emit_download_progress(&app, &link, mod_name, 0, "Download started");
 
+    if link.key.is_none() || link.expires.is_none() {
+        emit_log(
+            &app,
+            &format!("Queued (awaiting auth URL): {}", mod_name),
+            "success",
+        );
+        return Ok(());
+    }
+
+    emit_log(&app, &format!("Download queued: {}", mod_name), "success");
+    emit_download_progress(&app, &link, mod_name, 0, "Starting");
     let app_for_download = app.clone();
     let client_for_download = client.clone();
     let link_for_download = link.clone();
-    let metadata_for_download = metadata.clone();
+    let mut metadata_for_download = metadata.clone();
     let mod_name = mod_name.to_string();
     tauri::async_runtime::spawn(async move {
-        match download_archive(
+        let slot = acquire_download_slot().await;
+        let _ = update_listing_progress(&listing_path, 0.0);
+        emit_download_progress(&app_for_download, &link_for_download, &mod_name, 0, "Resolving download URL");
+
+        let download_links = resolve_download_links(
+            &client_for_download,
+            &api_key,
+            &link_for_download,
+        )
+        .await;
+        match download_links {
+            Ok(links) => {
+                let resolved_uri = first_download_uri(&links)
+                    .map(Value::String)
+                    .unwrap_or(Value::Null);
+                if let Some(download) = metadata_for_download.get_mut("download") {
+                    download["links"] = links;
+                    download["links_error"] = Value::Null;
+                    download["resolved_uri"] = resolved_uri;
+                }
+                emit_log(&app_for_download, "Resolved download URL", "success");
+            }
+            Err((status, err)) => {
+                if let Some(download) = metadata_for_download.get_mut("download") {
+                    download["links_error"] = json!({ "status": status, "error": err });
+                }
+                let error = format!("Could not resolve download link: {}", status);
+                let _ = update_listing_failed(&listing_path, &error);
+                emit_log(&app_for_download, &error, "warning");
+                slot.release().await;
+                return;
+            }
+        }
+
+        let result = download_archive(
             &app_for_download,
             &client_for_download,
             &link_for_download,
@@ -270,8 +344,10 @@ async fn download_mod_link(app: AppHandle, link: NxmLink, url: String) -> Result
             &listing_path,
             &mod_name,
         )
-        .await
-        {
+        .await;
+        slot.release().await;
+
+        match result {
             Ok(file_path) => {
                 if let Err(err) = update_listing_downloaded(&listing_path, &file_path) {
                     emit_log(
@@ -390,7 +466,18 @@ async fn handle_nxm_collection_link(
             "nxm://{}/mods/{}/files/{}",
             mod_entry.game_domain, mod_entry.mod_id, mod_entry.file_id
         );
-        tauri::async_runtime::spawn(download_mod_link(app.clone(), nxm_link, url));
+        let app_spawn = app.clone();
+        let mod_id = mod_entry.mod_id;
+        let file_id = mod_entry.file_id;
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = download_mod_link(app_spawn.clone(), nxm_link, url).await {
+                emit_log(
+                    &app_spawn,
+                    &format!("Failed to queue {}/{}: {}", mod_id, file_id, err),
+                    "error",
+                );
+            }
+        });
     }
 
     emit_log(

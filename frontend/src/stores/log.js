@@ -15,8 +15,6 @@ export function upsertProgressLog(key, message, progress = 0, type = 'info') {
     const idx = log.findIndex((entry) => entry.progressKey === key)
     const next = { time, message, type, progress, progressKey: key }
     if (idx === -1) return [...log, next]
-    const copy = [...log]
-    copy[idx] = next
-    return copy
+    return [...log.slice(0, idx), ...log.slice(idx + 1), next]
   })
 }
