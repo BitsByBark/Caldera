@@ -2,6 +2,8 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { push } from 'svelte-spa-router';
   import { invoke } from '@tauri-apps/api/core';
+  import { documentDir } from '@tauri-apps/api/path';
+  import { open } from '@tauri-apps/plugin-dialog';
   import { get } from 'svelte/store';
   import TopBar from '../components/TopBar.svelte';
   import Button from '../components/Button.svelte';
@@ -30,12 +32,23 @@
   let logViewport;
   let activePaneTab = 'DOWNLOADED_MODS';
   let modlistRows = [];
+  let showExportModal = false;
+  let exportPackName = '';
+  let exportPackType = 'OFFLINE INSTALL PACK';
+  let exportPath = '';
+  let includeDisabledMods = false;
+  let exportNameError = '';
   let unlistenSessionLog = null;
   const leftTabs = [
     { id: 'DOWNLOADED_MODS', label: 'DOWNLOADED MODS' },
     { id: 'COLLECTIONS', label: 'COLLECTIONS' },
   ];
   const defaultProfileTab = { id: 'DEFAULT_PROFILE', label: 'DEFAULT PROFILE' };
+  const exportPackTypes = [
+    'OFFLINE INSTALL PACK',
+    'ONLINE INSTALL PACK',
+    'ONLINE INSTALL + LOCAL',
+  ];
 
   $: game = $gameList.find((g) => g.app_id === params.id) || null;
   $: profileTabs = (gameConfig.profiles || []).length ? gameConfig.profiles : ['DEFAULT'];
@@ -223,6 +236,68 @@
     push(`/game/${params.id}/profile`);
   }
 
+  async function openExportPackModal() {
+    exportNameError = '';
+    showExportModal = true;
+
+    if (!exportPath.trim()) {
+      try {
+        exportPath = await documentDir();
+      } catch (err) {
+        addLog(`Failed to resolve Documents folder: ${String(err)}`, 'warning');
+      }
+    }
+  }
+
+  function closeExportPackModal() {
+    showExportModal = false;
+    exportNameError = '';
+  }
+
+  function onExportBackdropClick(event) {
+    if (event.currentTarget === event.target) {
+      closeExportPackModal();
+    }
+  }
+
+  function onExportBackdropKeydown(event) {
+    if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      closeExportPackModal();
+    }
+  }
+
+  async function browseExportPath() {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === 'string' && selected.length > 0) {
+        exportPath = selected;
+      }
+    } catch (err) {
+      showToast(`Folder picker failed: ${String(err)}`, 'error');
+    }
+  }
+
+  async function submitExportPack() {
+    const trimmedName = exportPackName.trim();
+    if (!trimmedName) {
+      exportNameError = 'Pack name is required';
+      return;
+    }
+
+    if (!exportPath.trim()) {
+      try {
+        exportPath = await documentDir();
+      } catch (err) {
+        addLog(`Failed to resolve Documents folder: ${String(err)}`, 'warning');
+      }
+    }
+
+    exportNameError = '';
+    addLog(`Exporting pack: ${trimmedName} (${exportPackType})`, 'info');
+    closeExportPackModal();
+  }
+
   async function onUncompressRow(row) {
     if (!row?.sourcePath) {
       addLog(`No source path available for ${row?.name || 'archive'}`, 'warning');
@@ -356,6 +431,10 @@
   </section>
 
   {#if editMode}
+    <section class="export-bar">
+      <button class="export-open-btn" on:click={openExportPackModal}>EXPORT ⭲</button>
+    </section>
+
     <section class="tab-bar">
       <div class="mods-tabs">
         {#each leftTabs as tab}
@@ -415,6 +494,73 @@
         </article>
       {/if}
     </section>
+  {/if}
+
+  {#if showExportModal}
+    <div
+      class="export-modal-backdrop"
+      role="button"
+      tabindex="0"
+      aria-label="Close export pack modal"
+      on:click={onExportBackdropClick}
+      on:keydown={onExportBackdropKeydown}
+    >
+      <section
+        class="export-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="export-pack-title"
+        tabindex="-1"
+      >
+        <button class="export-close-btn" aria-label="Close export pack modal" on:click={closeExportPackModal}>X</button>
+        <h2 id="export-pack-title">EXPORT PACK</h2>
+
+        <label class="export-field">
+          <span>&#123; PACK NAME &#125;</span>
+          <input
+            type="text"
+            bind:value={exportPackName}
+            placeholder="PACK NAME"
+            class:error={exportNameError}
+            on:input={() => (exportNameError = '')}
+          />
+          {#if exportNameError}
+            <div class="export-error">{exportNameError}</div>
+          {/if}
+        </label>
+
+        <div class="export-field">
+          <span>&#123; PACK TYPE &#125;</span>
+          <div class="export-type-list">
+            {#each exportPackTypes as type}
+              <button
+                class={`export-type-btn ${exportPackType === type ? 'active' : ''}`}
+                on:click={() => (exportPackType = type)}
+              >{type}</button>
+            {/each}
+          </div>
+        </div>
+
+        <label class="export-field">
+          <span>&#123; EXPORT PATH &#125;</span>
+          <div class="export-path-row">
+            <input type="text" bind:value={exportPath} placeholder="Documents" />
+            <button class="export-browse-btn" type="button" on:click={browseExportPath}>...</button>
+          </div>
+        </label>
+
+        <label class="export-toggle-row">
+          <span>&#123; INCLUDE DISABLED MODS &#125;</span>
+          <button
+            class={`export-toggle ${includeDisabledMods ? 'on' : ''}`}
+            type="button"
+            on:click={() => (includeDisabledMods = !includeDisabledMods)}
+          >{includeDisabledMods ? 'ON' : 'OFF'}</button>
+        </label>
+
+        <button class="export-submit-btn" on:click={submitExportPack}>EXPORT ⭲</button>
+      </section>
+    </div>
   {/if}
 
   <section class={`log-panel ${logExpanded ? 'expanded' : 'collapsed'}`}>
@@ -643,6 +789,198 @@
 
   .selector-input {
     width: 240px;
+  }
+
+  .export-bar {
+    width: 100%;
+    background: #221E1B;
+    border-bottom: 1px solid rgba(232, 184, 75, 0.28);
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    box-sizing: border-box;
+  }
+
+  .export-open-btn,
+  .export-submit-btn,
+  .export-browse-btn,
+  .export-close-btn,
+  .export-type-btn,
+  .export-toggle {
+    font-family: var(--font-ui), monospace;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+
+  .export-open-btn,
+  .export-submit-btn {
+    border: 1px solid #E8B84B;
+    background: transparent;
+    color: #E8B84B;
+    padding: 9px 16px;
+  }
+
+  .export-open-btn:hover,
+  .export-submit-btn:hover,
+  .export-browse-btn:hover,
+  .export-close-btn:hover,
+  .export-type-btn:hover,
+  .export-toggle:hover {
+    color: #1A1614;
+    background: #E8B84B;
+  }
+
+  .export-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.72);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+
+  .export-modal {
+    position: relative;
+    width: min(620px, 100%);
+    background: #221E1B;
+    border: 1px solid #E8B84B;
+    color: var(--text);
+    font-family: var(--font-ui), monospace;
+    padding: 28px;
+    box-sizing: border-box;
+    border-radius: 2px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  }
+
+  .export-modal h2 {
+    margin: 0 0 22px;
+    color: #E8B84B;
+    font-size: 22px;
+    letter-spacing: 2px;
+    font-weight: 400;
+  }
+
+  .export-close-btn {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    border: 1px solid #E8B84B;
+    background: transparent;
+    color: #E8B84B;
+    width: 32px;
+    height: 32px;
+  }
+
+  .export-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .export-field span,
+  .export-toggle-row span {
+    color: var(--text-muted);
+    letter-spacing: 1px;
+    font-size: 13px;
+  }
+
+  .export-field input {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #E8B84B;
+    border-radius: 2px;
+    background: #1A1614;
+    color: var(--text);
+    font-family: var(--font-ui), monospace;
+    padding: 10px 12px;
+    outline: none;
+  }
+
+  .export-field input:focus {
+    border-color: #C0392B;
+  }
+
+  .export-field input.error {
+    border-color: #C0392B;
+  }
+
+  .export-error {
+    color: #C0392B;
+    font-size: 12px;
+    letter-spacing: 1px;
+  }
+
+  .export-type-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .export-type-btn {
+    min-height: 44px;
+    border: 1px solid #E8B84B;
+    background: #1A1614;
+    color: #E8B84B;
+    padding: 8px 10px;
+  }
+
+  .export-type-btn.active {
+    border-color: #C0392B;
+    background: #C0392B;
+    color: #fff;
+  }
+
+  .export-path-row {
+    display: grid;
+    grid-template-columns: 1fr 48px;
+    gap: 8px;
+  }
+
+  .export-browse-btn,
+  .export-toggle {
+    border: 1px solid #E8B84B;
+    background: #1A1614;
+    color: #E8B84B;
+  }
+
+  .export-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 6px 0 24px;
+  }
+
+  .export-toggle {
+    min-width: 68px;
+    padding: 8px 12px;
+  }
+
+  .export-toggle.on {
+    border-color: #C0392B;
+    background: #C0392B;
+    color: #fff;
+  }
+
+  .export-submit-btn {
+    width: 100%;
+  }
+
+  @media (max-width: 720px) {
+    .export-type-list {
+      grid-template-columns: 1fr;
+    }
+
+    .export-modal {
+      padding: 22px;
+    }
   }
 
   .tab-bar {

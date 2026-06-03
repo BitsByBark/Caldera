@@ -5,6 +5,7 @@ pub mod deployer;
 pub mod download;
 pub mod nxm;
 pub mod operations;
+pub mod packer;
 pub mod profile_format;
 pub mod profile_runtime;
 pub mod runtime;
@@ -72,6 +73,33 @@ pub fn get_game_config(game_id: String) -> GameConfig {
 
 pub fn save_game_config(game_id: String, config: GameConfig) {
     config::save_game_config_stub(game_id, config)
+}
+
+pub fn export_pack(
+    app: &tauri::AppHandle,
+    app_id: String,
+    profile_name: String,
+    pack_name: String,
+    pack_type: String,
+    export_path: String,
+    include_disabled: bool,
+) -> Result<String, String> {
+    packer::export::export_pack(
+        app,
+        app_id,
+        profile_name,
+        pack_name,
+        pack_type,
+        export_path,
+        include_disabled,
+    )
+}
+
+pub fn import_pack(
+    app: &tauri::AppHandle,
+    pack_path: String,
+) -> Result<packer::ImportResult, String> {
+    packer::import::import_pack(app, pack_path)
 }
 
 pub fn get_modlist_listings(

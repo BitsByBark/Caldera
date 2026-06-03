@@ -467,9 +467,9 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
     let norm_name = normalize_name(trimmed_name);
 
     let duplicate = if resolved_install_path.is_empty() {
-        manual_games.iter().any(|g| {
-            normalize_name(&g.name) == norm_name && g.install_path.trim().is_empty()
-        })
+        manual_games
+            .iter()
+            .any(|g| normalize_name(&g.name) == norm_name && g.install_path.trim().is_empty())
     } else {
         let norm_path = normalize_install_path(Path::new(&resolved_install_path));
         manual_games.iter().any(|g| {

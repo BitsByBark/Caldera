@@ -64,6 +64,35 @@ fn save_game_config(game_id: String, config: GameConfig) {
 }
 
 #[tauri::command(rename_all = "camelCase")]
+fn export_pack(
+    app: tauri::AppHandle,
+    app_id: String,
+    profile_name: String,
+    pack_name: String,
+    pack_type: String,
+    export_path: String,
+    include_disabled: bool,
+) -> Result<String, String> {
+    caldera_backend::export_pack(
+        &app,
+        app_id,
+        profile_name,
+        pack_name,
+        pack_type,
+        export_path,
+        include_disabled,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn import_pack(
+    app: tauri::AppHandle,
+    pack_path: String,
+) -> Result<caldera_backend::packer::ImportResult, String> {
+    caldera_backend::import_pack(&app, pack_path)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 fn get_modlist_listings(
     app: tauri::AppHandle,
     app_id: String,
@@ -238,6 +267,8 @@ fn main() {
             ensure_game_cache,
             get_game_config,
             save_game_config,
+            export_pack,
+            import_pack,
             get_modlist_listings,
             get_profile_modlist,
             resolve_deployer_path,
