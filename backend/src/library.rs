@@ -65,6 +65,8 @@ pub struct GameConfig {
     pub game_id: String,
     pub name: String,
     pub mod_directory: String,
+    #[serde(default)]
+    pub game_domain: Option<String>,
     pub deployer: Option<String>,
     pub active_profile: Option<String>,
     pub profiles: Vec<String>,
@@ -137,6 +139,16 @@ pub fn import_pack(
     pack_path: String,
 ) -> Result<filehandler::packer::ImportResult, AppError> {
     filehandler::packer::import::import_pack(app, pack_path)
+}
+
+pub fn list_collections(
+    app_id: String,
+) -> Result<Vec<filehandler::packer::collections::CollectionEntry>, AppError> {
+    filehandler::packer::collections::list_collections(app_id)
+}
+
+pub async fn fetch_nexus_collections(app_id: String, game_domain: String) -> Result<(), AppError> {
+    filehandler::packer::collections::fetch_nexus_collections(app_id, game_domain).await
 }
 
 pub fn get_modlist_listings(

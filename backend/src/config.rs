@@ -17,6 +17,7 @@ pub fn get_game_config(game_id: String) -> GameConfig {
         game_id: game_id.clone(),
         name: game_id.clone(),
         mod_directory: String::new(),
+        game_domain: None,
         deployer: None,
         active_profile: Some(crate::filehandler::runtime_reader::DEFAULT_PROFILE.to_string()),
         profiles: vec![crate::filehandler::runtime_reader::DEFAULT_PROFILE.to_string()],

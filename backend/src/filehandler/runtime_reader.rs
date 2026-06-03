@@ -25,8 +25,108 @@ pub fn library_dir() -> PathBuf {
     root_dir().join("library")
 }
 
+fn safe_game_folder_part(value: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') {
+            out.push(ch);
+        } else if !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    let out = out.trim_matches(|ch| ch == '_' || ch == ' ').to_string();
+    if out.is_empty() {
+        fallback.to_string()
+    } else {
+        out
+    }
+}
+
+pub fn game_folder_name(game_name: &str, app_id: &str) -> String {
+    if game_name.trim().is_empty() {
+        return safe_game_folder_part(app_id, app_id);
+    }
+    format!(
+        "{}-{}",
+        safe_game_folder_part(game_name, app_id),
+        safe_game_folder_part(app_id, app_id)
+    )
+}
+
+fn game_dir_from_library(app_id: &str) -> Option<PathBuf> {
+    let library = library_dir();
+    let entries = fs::read_dir(&library).ok()?;
+    let mut exact = None;
+    let mut named = None;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let folder_name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if folder_name == app_id {
+            exact = Some(path.clone());
+        }
+        let meta_path = path.join("metadata").join("meta.json");
+        let Ok(raw) = fs::read_to_string(&meta_path) else { continue; };
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else { continue; };
+        if parsed.get("app_id").and_then(|v| v.as_str()) == Some(app_id) {
+            if folder_name != app_id {
+                named = Some(path);
+                break;
+            }
+            exact = Some(path);
+        }
+    }
+
+    named.or(exact)
+}
+
+fn known_game_name(app_id: &str) -> Option<String> {
+    let library = library_dir();
+    if let Ok(entries) = fs::read_dir(&library) {
+        for entry in entries.flatten() {
+            let meta_path = entry.path().join("metadata").join("meta.json");
+            let Ok(raw) = fs::read_to_string(&meta_path) else { continue; };
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else { continue; };
+            if parsed.get("app_id").and_then(|v| v.as_str()) == Some(app_id) {
+                if let Some(name) = parsed.get("name").and_then(|v| v.as_str()) {
+                    if !name.trim().is_empty() {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let manual_path = root_dir().join("manual_games.json");
+    let raw = fs::read_to_string(&manual_path).ok()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    for game in parsed.as_array()? {
+        if game.get("app_id").and_then(|v| v.as_str()) == Some(app_id) {
+            return game
+                .get("name")
+                .and_then(|v| v.as_str())
+                .filter(|name| !name.trim().is_empty())
+                .map(str::to_string);
+        }
+    }
+    None
+}
+
 pub fn game_dir(app_id: &str) -> PathBuf {
-    library_dir().join(app_id)
+    game_dir_from_library(app_id).unwrap_or_else(|| {
+        if let Some(name) = known_game_name(app_id) {
+            game_dir_for_name(app_id, &name)
+        } else {
+            library_dir().join(app_id)
+        }
+    })
+}
+
+pub fn game_dir_for_name(app_id: &str, game_name: &str) -> PathBuf {
+    library_dir().join(game_folder_name(game_name, app_id))
 }
 
 pub fn metadata_dir(app_id: &str) -> PathBuf {
@@ -115,6 +215,20 @@ pub fn ensure_game_dirs(app_id: &str) -> Result<(), AppError> {
         mods_dir(app_id),
         profiles_dir(app_id),
         collections_dir(app_id),
+    ] {
+        fs::create_dir_all(&dir).with_path(&dir)?;
+    }
+    Ok(())
+}
+
+pub fn ensure_game_dirs_for_name(app_id: &str, game_name: &str) -> Result<(), AppError> {
+    let root = game_dir_for_name(app_id, game_name);
+    for dir in [
+        root.join("metadata"),
+        root.join("metadata").join("artwork"),
+        root.join("mods"),
+        root.join("profiles"),
+        root.join("collections"),
     ] {
         fs::create_dir_all(&dir).with_path(&dir)?;
     }

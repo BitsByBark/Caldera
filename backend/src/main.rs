@@ -96,6 +96,20 @@ fn import_pack(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+fn list_collections(
+    app_id: String,
+) -> Result<Vec<caldera_backend::filehandler::packer::collections::CollectionEntry>, String> {
+    caldera_backend::list_collections(app_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn fetch_nexus_collections(app_id: String, game_domain: String) -> Result<(), String> {
+    caldera_backend::fetch_nexus_collections(app_id, game_domain)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(rename_all = "camelCase")]
 fn get_modlist_listings(
     app: tauri::AppHandle,
     app_id: String,
@@ -272,6 +286,8 @@ fn main() {
             save_game_config,
             export_pack,
             import_pack,
+            list_collections,
+            fetch_nexus_collections,
             get_modlist_listings,
             get_profile_modlist,
             resolve_deployer_path,

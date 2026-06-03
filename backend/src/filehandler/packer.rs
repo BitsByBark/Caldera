@@ -85,6 +85,10 @@ fn now_iso() -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
+fn today_date() -> String {
+    now_iso().split('T').next().unwrap_or("1970-01-01").to_string()
+}
+
 fn cache_profile_path(app_id: &str, profile_name: &str) -> PathBuf {
     crate::filehandler::runtime_reader::profile_path(app_id, profile_name)
 }
@@ -477,6 +481,29 @@ pub mod import {
                 &format!("Game not found in registry: {}", manifest.game.id),
             );
         }
+        crate::filehandler::runtime_reader::ensure_game_dirs_for_name(
+            &manifest.game.id,
+            &manifest.game.name,
+        )?;
+        let meta_path = crate::filehandler::runtime_reader::game_dir_for_name(
+            &manifest.game.id,
+            &manifest.game.name,
+        )
+        .join("metadata")
+        .join("meta.json");
+        if !meta_path.exists() {
+            let meta = serde_json::json!({
+                "app_id": manifest.game.id,
+                "name": manifest.game.name,
+                "install_path": ""
+            });
+            fs::write(
+                &meta_path,
+                serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()),
+            )
+            .with_path(&meta_path)?;
+        }
+        super::collections::register_caldera_pack(&p, &manifest)?;
 
         let failed_mods = verify_bundled_files(app, &manifest, &entries)?;
         let profile_name = imported_profile_name(&manifest.profile);
@@ -705,5 +732,224 @@ pub mod import {
         }
         let body = serde_json::to_string_pretty(&registry).map_err(AppError::Json)?;
         fs::write(&path, body).with_path(&path)
+    }
+}
+
+pub mod collections {
+    use super::*;
+    use serde_json::Value;
+
+    #[derive(Debug, Clone, Serialize)]
+    pub struct CollectionEntry {
+        pub internal_id: String,
+        pub name: String,
+        pub source: String,
+        pub mod_count: u32,
+        pub size_bytes: Option<u64>,
+        pub pack_type: Option<String>,
+        pub version: Option<String>,
+        pub description: Option<String>,
+        pub endorsements: Option<u32>,
+        pub adult_content: Option<bool>,
+        pub collection_status: Option<String>,
+        pub slug: Option<String>,
+        pub pack_path: Option<String>,
+        pub last_published: Option<String>,
+    }
+
+    fn collections_dir(app_id: &str) -> PathBuf {
+        crate::filehandler::runtime_reader::collections_dir(app_id)
+    }
+
+    fn internal_id() -> String {
+        OffsetDateTime::now_utc().unix_timestamp_nanos().to_string()
+    }
+
+    fn quote(s: &str) -> String {
+        serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+    }
+
+    fn field(raw: &str, key: &str) -> Option<String> {
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.starts_with("//") || line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let Some((k, v)) = line.split_once('=') else { continue; };
+            if k.trim() != key {
+                continue;
+            }
+            let v = v.trim();
+            if v.starts_with('"') {
+                return serde_json::from_str::<String>(v).ok();
+            }
+            return Some(v.to_string());
+        }
+        None
+    }
+
+    fn field_u32(raw: &str, key: &str) -> Option<u32> {
+        field(raw, key)?.parse::<u32>().ok()
+    }
+
+    fn field_u64(raw: &str, key: &str) -> Option<u64> {
+        field(raw, key)?.parse::<u64>().ok()
+    }
+
+    fn field_bool(raw: &str, key: &str) -> Option<bool> {
+        field(raw, key)?.parse::<bool>().ok()
+    }
+
+    fn current_revision_mod_count(raw: &str) -> Option<u32> {
+        let start = raw.find("current_revision")?;
+        field_u32(&raw[start..], "mod_count")
+    }
+
+    fn parse_collection(raw: &str) -> Option<CollectionEntry> {
+        let source = field(raw, "source")?;
+        let mod_count = if source == "nexus" {
+            current_revision_mod_count(raw).unwrap_or(0)
+        } else {
+            field_u32(raw, "mod_count").unwrap_or(0)
+        };
+        Some(CollectionEntry {
+            internal_id: field(raw, "internal_id").unwrap_or_default(),
+            name: field(raw, "name").unwrap_or_else(|| "Untitled Collection".to_string()),
+            source,
+            mod_count,
+            size_bytes: field_u64(raw, "size_bytes"),
+            pack_type: field(raw, "pack_type"),
+            version: field(raw, "version"),
+            description: field(raw, "description"),
+            endorsements: field_u32(raw, "endorsements"),
+            adult_content: field_bool(raw, "adult_content"),
+            collection_status: field(raw, "collection_status"),
+            slug: field(raw, "slug"),
+            pack_path: field(raw, "pack_path"),
+            last_published: field(raw, "last_published"),
+        })
+    }
+
+    pub fn list_collections(app_id: String) -> Result<Vec<CollectionEntry>, AppError> {
+        let dir = collections_dir(&app_id);
+        fs::create_dir_all(&dir).with_path(&dir)?;
+        let mut out = Vec::new();
+        for entry in fs::read_dir(&dir).with_path(&dir)? {
+            let path = entry.with_path(&dir)?.path();
+            if !path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("cldr"))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let raw = fs::read_to_string(&path).with_path(&path)?;
+            if let Some(collection) = parse_collection(&raw) {
+                out.push(collection);
+            }
+        }
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok(out)
+    }
+
+    pub fn register_caldera_pack(pack_path: &Path, manifest: &PackManifest) -> Result<(), AppError> {
+        let dir = collections_dir(&manifest.game.id);
+        fs::create_dir_all(&dir).with_path(&dir)?;
+        if pack_path.starts_with(&dir) {
+            return Ok(());
+        }
+        let id = internal_id();
+        let stem = format!("{}-{}", safe_name(&manifest.name), id);
+        let stored_pack = dir.join(format!("{}.caldera", stem));
+        fs::copy(pack_path, &stored_pack).with_path(pack_path)?;
+        let size = fs::metadata(&stored_pack).with_path(&stored_pack)?.len();
+        let cldr = dir.join(format!("{}.cldr", stem));
+        let body = format!(
+            "#type collection\n#version 1\n#created {}\n\nsource        = \"caldera\"\ninternal_id   = {}\nname          = {}\nversion       = {}\npack_type     = {}\ngame_id       = {}\nmod_count     = {}\nsize_bytes    = {}\npack_path     = {}\nimported_at   = {}\n",
+            today_date(),
+            quote(&id),
+            quote(&manifest.name),
+            quote(&manifest.version),
+            quote(&manifest.pack_type),
+            quote(&manifest.game.id),
+            manifest.mods.len(),
+            size,
+            quote(&stored_pack.to_string_lossy()),
+            quote(&now_iso()),
+        );
+        fs::write(&cldr, body).with_path(&cldr)
+    }
+
+    fn nexus_api_key() -> Result<Option<String>, AppError> {
+        let values = crate::filehandler::runtime::get_settings_values()?;
+        Ok(values
+            .get("accounts")
+            .and_then(|v| v.get("nexus_api_key"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string))
+    }
+
+    fn nexus_collection_body(app_id: &str, node: &Value, raw: &Value) -> String {
+        let id = node.get("id").and_then(Value::as_str).unwrap_or("");
+        let slug = node.get("slug").and_then(Value::as_str).unwrap_or(id);
+        let name = node.get("name").and_then(Value::as_str).unwrap_or("Nexus Collection");
+        let revision = node.get("currentRevision").unwrap_or(&Value::Null);
+        let raw_string = serde_json::to_string(raw).unwrap_or_else(|_| "{}".to_string());
+        format!(
+            "#type collection\n#version 1\n#created {}\n\nsource          = \"nexus\"\ninternal_id     = {}\nname            = {}\nslug            = {}\ndescription     = {}\ngame_id         = {}\ngame_domain     = {}\nendorsements    = {}\nadult_content   = {}\ncollection_status = {}\ncreated_at      = {}\nlast_published  = {}\nfirst_published = {}\n\ncurrent_revision {{\n    revision_number = {}\n    mod_count       = {}\n}}\n\n// raw GraphQL response stored below for future use\n// adult content filter: stubbed, not applied yet\n// collection status filter: stubbed, not applied yet\n// rate limiting: stubbed, not applied yet\n\n[raw_nexus_data]\nraw = {}\n",
+            today_date(),
+            quote(id),
+            quote(name),
+            quote(slug),
+            quote(node.get("description").and_then(Value::as_str).unwrap_or("")),
+            quote(app_id),
+            quote(node.get("game").and_then(|g| g.get("domainName")).and_then(Value::as_str).unwrap_or("")),
+            node.get("endorsements").and_then(Value::as_u64).unwrap_or(0),
+            node.get("adultContent").and_then(Value::as_bool).unwrap_or(false),
+            quote(node.get("collectionStatus").and_then(Value::as_str).unwrap_or("")),
+            quote(node.get("createdAt").and_then(Value::as_str).unwrap_or("")),
+            quote(node.get("lastPublishedAt").and_then(Value::as_str).unwrap_or("")),
+            quote(node.get("firstPublishedAt").and_then(Value::as_str).unwrap_or("")),
+            revision.get("revisionNumber").and_then(Value::as_u64).unwrap_or(0),
+            revision.get("modCount").and_then(Value::as_u64).unwrap_or(0),
+            quote(&raw_string),
+        )
+    }
+
+    pub async fn fetch_nexus_collections(app_id: String, game_domain: String) -> Result<(), AppError> {
+        let Some(api_key) = nexus_api_key()? else {
+            return Ok(());
+        };
+        let query = r#"query GetCollections($domainName: String!) { collections(domainName: $domainName) { nodes { id slug name description adultContent collectionStatus createdAt lastPublishedAt firstPublishedAt endorsements category { id name } headerImage { url thumbnailUrl(size: MED) } tileImage { url thumbnailUrl(size: MED) } currentRevision { revisionNumber modCount collectionChangelog { description } } latestPublishedRevision { revisionNumber modCount } game { id domainName name } badges { type title } } } }"#;
+        let response: Value = reqwest::Client::new()
+            .post("https://graphql.nexusmods.com/")
+            .header("apikey", api_key)
+            .json(&serde_json::json!({ "query": query, "variables": { "domainName": game_domain } }))
+            .send()
+            .await
+            .map_err(|e| AppError::other(format!("Nexus collections fetch failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| AppError::other(format!("Nexus collections response failed: {}", e)))?;
+        let dir = collections_dir(&app_id);
+        fs::create_dir_all(&dir).with_path(&dir)?;
+        let nodes = response
+            .get("data")
+            .and_then(|d| d.get("collections"))
+            .and_then(|c| c.get("nodes"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for node in nodes {
+            let slug = node.get("slug").and_then(Value::as_str).unwrap_or("collection");
+            let name = node.get("name").and_then(Value::as_str).unwrap_or("collection");
+            let path = dir.join(format!("{}-{}.cldr", safe_name(name), safe_name(slug)));
+            let body = nexus_collection_body(&app_id, &node, &response);
+            fs::write(&path, body).with_path(&path)?;
+        }
+        Ok(())
     }
 }

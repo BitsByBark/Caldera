@@ -184,10 +184,106 @@ fn manual_app_id(name: &str) -> String {
     format!("manual:{}", slugify_name(name))
 }
 
-fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), AppError> {
-    crate::filehandler::runtime_reader::ensure_game_dirs(&game.app_id)?;
+fn copy_dir_missing(src: &Path, dest: &Path) -> Result<(), AppError> {
+    if !src.exists() || !src.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dest).with_path(dest)?;
+    for entry in fs::read_dir(src).with_path(src)? {
+        let entry = entry.with_path(src)?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_missing(&src_path, &dest_path)?;
+        } else if src_path.is_file() && !dest_path.exists() {
+            fs::copy(&src_path, &dest_path).with_path(&dest_path)?;
+        }
+    }
+    Ok(())
+}
 
-    let config_toml = crate::filehandler::runtime_reader::game_config_path(&game.app_id);
+fn import_legacy_downloads(game: &SteamGame, game_root: &Path) -> Result<(), AppError> {
+    let legacy_dir = base_config_dir()
+        .join("downloads")
+        .join(format!("{}-{}", slugify_name(&game.name), game.app_id));
+    if !legacy_dir.exists() || !legacy_dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&legacy_dir).with_path(&legacy_dir)? {
+        let entry = entry.with_path(&legacy_dir)?;
+        let src_path = entry.path();
+        if !src_path.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.ends_with(".json") || file_name.ends_with(".part") {
+            continue;
+        }
+        let mod_id = format!(
+            "legacy-{}",
+            crate::filehandler::runtime_reader::safe_runtime_name(
+                src_path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("download"),
+                "download",
+            )
+        );
+        let mod_root = game_root.join("mods").join(&mod_id);
+        let files_dir = mod_root.join("files");
+        fs::create_dir_all(&files_dir).with_path(&files_dir)?;
+        let dest_path = files_dir.join(&file_name);
+        if !dest_path.exists() {
+            fs::copy(&src_path, &dest_path).with_path(&dest_path)?;
+        }
+        let meta_path = mod_root.join("meta.toml");
+        if meta_path.exists() {
+            continue;
+        }
+        let listing = crate::config::ModListing {
+            mod_id: mod_id.clone(),
+            name: file_name.clone(),
+            status: "downloaded".to_string(),
+            source_path: Some(dest_path.to_string_lossy().to_string()),
+            deployable: false,
+            deployer_reason: None,
+            added_at: None,
+            progress: Some(1.0),
+            speed: Some("0 KB/S".to_string()),
+            version: None,
+            author: None,
+            description: None,
+            summary: None,
+            source: Some("legacy-download".to_string()),
+            source_url: None,
+            nexus_mod_id: None,
+            nexus_file_id: None,
+            categories: Vec::new(),
+            tags: Vec::new(),
+            file_size: fs::metadata(&dest_path).ok().map(|m| m.len() as f64),
+            file_count: Some(1.0),
+            file_types: Vec::new(),
+            user_notes: None,
+            favorite: None,
+            files: vec![file_name],
+        };
+        let body = toml::to_string_pretty(&listing).map_err(AppError::TomlSerialize)?;
+        fs::write(&meta_path, body).with_path(&meta_path)?;
+    }
+    Ok(())
+}
+
+fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), AppError> {
+    let old_root = crate::filehandler::runtime_reader::library_dir().join(&game.app_id);
+    let new_root = crate::filehandler::runtime_reader::game_dir_for_name(&game.app_id, &game.name);
+    crate::filehandler::runtime_reader::ensure_game_dirs_for_name(&game.app_id, &game.name)?;
+    if old_root != new_root {
+        copy_dir_missing(&old_root, &new_root)?;
+    }
+    import_legacy_downloads(game, &new_root)?;
+
+    let config_toml = new_root.join("metadata").join("config.toml");
     if !config_toml.exists() {
         fs::write(&config_toml, "").with_path(&config_toml)?;
     }
@@ -197,7 +293,7 @@ fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), AppError> {
         "name": game.name,
         "install_path": game.install_path
     });
-    let meta_path = crate::filehandler::runtime_reader::game_meta_path(&game.app_id);
+    let meta_path = new_root.join("metadata").join("meta.json");
     fs::write(
         &meta_path,
         serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()),

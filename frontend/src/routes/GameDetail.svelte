@@ -7,6 +7,7 @@
   import { get } from 'svelte/store';
   import TopBar from '../components/TopBar.svelte';
   import Button from '../components/Button.svelte';
+  import CollectionsTab from '../components/CollectionsTab.svelte';
   import Dropdown from '../components/Dropdown.svelte';
   import Dropup from '../components/Dropup.svelte';
   import { gameList } from '../stores/game.js';
@@ -22,6 +23,7 @@
     game_id: '',
     name: '',
     mod_directory: '',
+    game_domain: null,
     deployer: null,
     active_profile: null,
     profiles: [],
@@ -490,10 +492,7 @@
         </div>
       </article>
     {:else}
-      <article class="modlist-pane">
-        <h3>COLLECTIONS</h3>
-        <p>COLLECTIONS PLACEHOLDER</p>
-      </article>
+      <CollectionsTab appId={params.id} gameDomain={gameConfig.game_domain} onInstalled={loadModlistRows} />
     {/if}
   </section>
 
@@ -1026,18 +1025,6 @@
     margin: 0 0 12px;
     color: var(--text);
     letter-spacing: 1px;
-  }
-
-  .modlist-pane p {
-    margin: 0;
-    color: var(--interactive);
-    font-size: 18px;
-  }
-
-  .modlist-pane small {
-    display: inline-block;
-    margin-top: 10px;
-    color: var(--text-muted);
   }
 
   .mods-table {
