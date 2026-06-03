@@ -88,7 +88,7 @@ fn export_pack(
 fn import_pack(
     app: tauri::AppHandle,
     pack_path: String,
-) -> Result<caldera_backend::packer::ImportResult, String> {
+) -> Result<caldera_backend::filehandler::packer::ImportResult, String> {
     caldera_backend::import_pack(&app, pack_path)
 }
 
@@ -203,7 +203,7 @@ fn deploy_listing(
 
 #[tauri::command(rename_all = "camelCase")]
 async fn handle_nxm_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    caldera_backend::nxm::handle_nxm_link(app, url).await
+    caldera_backend::downloadmanagers::nexus_catcher::handle_nxm_link(app, url).await
 }
 
 fn handle_nxm_arg(app: &tauri::AppHandle, arg: &str) {
@@ -214,7 +214,10 @@ fn handle_nxm_arg(app: &tauri::AppHandle, arg: &str) {
     let app = app.clone();
     let url = arg.to_string();
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = caldera_backend::nxm::handle_nxm_link(app.clone(), url).await {
+        if let Err(err) =
+            caldera_backend::downloadmanagers::nexus_catcher::handle_nxm_link(app.clone(), url)
+                .await
+        {
             let _ = app.emit(
                 "caldera://session-log",
                 serde_json::json!({
@@ -243,12 +246,6 @@ fn main() {
                 let app = deep_link_app.clone();
                 for url in event.urls() {
                     handle_nxm_arg(&app, url.as_str());
-                }
-            });
-            let download_app = app.clone();
-            tauri::async_runtime::spawn(async {
-                if let Err(err) = caldera_backend::download::run_server(download_app).await {
-                    eprintln!("CALDERA download server error: {}", err);
                 }
             });
             Ok(())

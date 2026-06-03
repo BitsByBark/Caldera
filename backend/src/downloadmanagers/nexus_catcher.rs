@@ -317,7 +317,7 @@ fn write_metadata(link: &NxmLink, _metadata: &Value) -> Result<(), String> {
 }
 
 fn append_queue_item(link: &NxmLink, metadata: &Value) -> Result<(), String> {
-    let queue_path = crate::runtime::base_config_dir().join("download_queue.json");
+    let queue_path = crate::filehandler::runtime::base_config_dir().join("download_queue.json");
     let mut queue = if queue_path.exists() {
         let raw = fs::read_to_string(&queue_path)
             .map_err(|e| format!("Failed reading queue {}: {}", queue_path.display(), e))?;
@@ -420,7 +420,7 @@ fn safe_file_name(name: &str) -> String {
 }
 
 fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, String> {
-    let library_root = crate::runtime::base_config_dir().join("library");
+    let library_root = crate::filehandler::runtime_reader::library_dir();
     let entries = fs::read_dir(&library_root).map_err(|e| {
         format!(
             "Failed reading library dir {}: {}",
@@ -448,9 +448,7 @@ fn library_root_for_domain(game_domain: &str) -> Result<PathBuf, String> {
             continue;
         };
         if nexus_domain_for_name(&name) == game_domain {
-            return Ok(crate::runtime::base_config_dir()
-                .join("library")
-                .join(app_id));
+            return Ok(crate::filehandler::runtime_reader::game_dir(&app_id));
         }
     }
 
@@ -656,7 +654,7 @@ async fn download_archive(
 }
 
 fn nexus_api_key() -> Result<String, String> {
-    let values = crate::runtime::get_settings_values()?;
+    let values = crate::filehandler::runtime::get_settings_values()?;
     values
         .get("accounts")
         .and_then(|accounts| accounts.get("nexus_api_key"))

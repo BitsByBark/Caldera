@@ -76,28 +76,18 @@ fn emit(app: &AppHandle, level: &str, message: &str) {
     );
 }
 
-fn base_config_dir() -> PathBuf {
-    crate::runtime::base_config_dir()
-}
-
 fn now_iso() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-fn library_root(app_id: &str) -> PathBuf {
-    base_config_dir().join("library").join(app_id)
-}
-
 fn cache_profile_path(app_id: &str, profile_name: &str) -> PathBuf {
-    library_root(app_id)
-        .join("profiles")
-        .join(format!("{}.cldr", safe_name(profile_name)))
+    crate::filehandler::runtime_reader::profile_path(app_id, profile_name)
 }
 
 fn mod_dir(app_id: &str, mod_id: &str) -> PathBuf {
-    library_root(app_id).join("mods").join(mod_id)
+    crate::filehandler::runtime_reader::mod_dir(app_id, mod_id)
 }
 
 fn safe_name(name: &str) -> String {
@@ -134,7 +124,7 @@ fn read_profile_text(app_id: &str, profile_name: &str) -> Result<String, String>
             .map_err(|e| format!("Failed reading profile {}: {}", requested.display(), e));
     }
 
-    let fallback = crate::profile_runtime::profile_path(app_id)?;
+    let fallback = crate::filehandler::runtime_reader::default_profile_path(app_id);
     fs::read_to_string(&fallback)
         .map_err(|e| format!("Failed reading profile {}: {}", fallback.display(), e))
 }
@@ -164,7 +154,7 @@ fn manifest_enabled(app_id: &str, mod_id: &str) -> Result<bool, String> {
     }))
 }
 
-fn mod_meta_toml(entry: &crate::profile_format::ModEntry) -> Result<String, String> {
+fn mod_meta_toml(entry: &crate::filehandler::parser::ModEntry) -> Result<String, String> {
     let mut table = toml::map::Map::new();
     table.insert("id".to_string(), toml::Value::String(entry.id.clone()));
     table.insert("name".to_string(), toml::Value::String(entry.name.clone()));
@@ -194,7 +184,7 @@ fn mod_meta_toml(entry: &crate::profile_format::ModEntry) -> Result<String, Stri
 
 fn read_or_make_meta(
     app_id: &str,
-    entry: &crate::profile_format::ModEntry,
+    entry: &crate::filehandler::parser::ModEntry,
 ) -> Result<String, String> {
     let p = mod_dir(app_id, &entry.id).join("meta.toml");
     if p.exists() {
@@ -294,7 +284,7 @@ pub mod export {
         }
 
         let profile_text = read_profile_text(&app_id, &profile_name)?;
-        let parsed_profile = crate::profile_format::parse_profile(&profile_text)
+        let parsed_profile = crate::filehandler::parser::parse_profile(&profile_text)
             .map_err(|e| format!("Failed parsing profile: {}", e))?;
         let game = crate::deployer::read_game_meta(&app_id)?;
         let deployer = parsed_profile.profile.deployer.clone();
@@ -413,7 +403,7 @@ pub mod export {
     pub fn build_pack(
         app_id: &str,
         profile_text: &str,
-        selected: &[(crate::profile_format::ModEntry, bool)],
+        selected: &[(crate::filehandler::parser::ModEntry, bool)],
         checked_files: &HashMap<String, Vec<(PathBuf, PackFile)>>,
         manifest: &PackManifest,
     ) -> Result<Vec<u8>, String> {
@@ -680,7 +670,7 @@ pub mod import {
         failed_mods: &HashSet<String>,
         entries: &HashMap<String, Vec<u8>>,
     ) -> Result<(), String> {
-        let path = base_config_dir().join("registry.cldr");
+        let path = crate::filehandler::runtime_reader::registry_path();
         let mut registry = if path.exists() {
             let raw = fs::read_to_string(&path)
                 .map_err(|e| format!("Failed reading registry {}: {}", path.display(), e))?;

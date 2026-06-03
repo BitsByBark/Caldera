@@ -6,11 +6,73 @@ use time::OffsetDateTime;
 
 use crate::config::ModListing;
 use crate::deployer::ModManifest;
-use crate::profile_format::{
+use crate::filehandler::parser::{
     serialize_profile, CalderaProfile, ConflictRule, ModEntry, ProfileMeta,
 };
 
-fn safe_profile_name(name: &str) -> String {
+pub const DEFAULT_PROFILE: &str = "DEFAULT";
+
+pub fn root_dir() -> PathBuf {
+    crate::filehandler::runtime::base_config_dir()
+}
+
+pub fn registry_path() -> PathBuf {
+    root_dir().join("registry.cldr")
+}
+
+pub fn library_dir() -> PathBuf {
+    root_dir().join("library")
+}
+
+pub fn game_dir(app_id: &str) -> PathBuf {
+    library_dir().join(app_id)
+}
+
+pub fn metadata_dir(app_id: &str) -> PathBuf {
+    game_dir(app_id).join("metadata")
+}
+
+pub fn game_meta_path(app_id: &str) -> PathBuf {
+    metadata_dir(app_id).join("meta.json")
+}
+
+pub fn game_config_path(app_id: &str) -> PathBuf {
+    metadata_dir(app_id).join("config.toml")
+}
+
+pub fn artwork_dir(app_id: &str) -> PathBuf {
+    metadata_dir(app_id).join("artwork")
+}
+
+pub fn mods_dir(app_id: &str) -> PathBuf {
+    game_dir(app_id).join("mods")
+}
+
+pub fn mod_dir(app_id: &str, mod_id: &str) -> PathBuf {
+    mods_dir(app_id).join(mod_id)
+}
+
+pub fn mod_files_dir(app_id: &str, mod_id: &str) -> PathBuf {
+    mod_dir(app_id, mod_id).join("files")
+}
+
+pub fn mod_meta_path(app_id: &str, mod_id: &str) -> PathBuf {
+    mod_dir(app_id, mod_id).join("meta.toml")
+}
+
+pub fn mod_manifest_path(app_id: &str, mod_id: &str) -> PathBuf {
+    mod_dir(app_id, mod_id).join("manifest.json")
+}
+
+pub fn profiles_dir(app_id: &str) -> PathBuf {
+    game_dir(app_id).join("profiles")
+}
+
+pub fn collections_dir(app_id: &str) -> PathBuf {
+    game_dir(app_id).join("collections")
+}
+
+pub fn safe_runtime_name(name: &str, fallback: &str) -> String {
     let mut out = String::new();
     for ch in name.trim().chars() {
         if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
@@ -21,10 +83,46 @@ fn safe_profile_name(name: &str) -> String {
     }
     let out = out.trim_matches('_').to_string();
     if out.is_empty() {
-        "DEFAULT".to_string()
+        fallback.to_string()
     } else {
         out
     }
+}
+
+pub fn profile_path(app_id: &str, profile_name: &str) -> PathBuf {
+    profiles_dir(app_id).join(format!(
+        "{}.cldr",
+        safe_runtime_name(profile_name, DEFAULT_PROFILE)
+    ))
+}
+
+pub fn default_profile_path(app_id: &str) -> PathBuf {
+    profile_path(app_id, DEFAULT_PROFILE)
+}
+
+pub fn collection_path(app_id: &str, collection_name: &str) -> PathBuf {
+    collections_dir(app_id).join(format!(
+        "{}.cldr",
+        safe_runtime_name(collection_name, "collection")
+    ))
+}
+
+pub fn ensure_game_dirs(app_id: &str) -> Result<(), String> {
+    for dir in [
+        metadata_dir(app_id),
+        artwork_dir(app_id),
+        mods_dir(app_id),
+        profiles_dir(app_id),
+        collections_dir(app_id),
+    ] {
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed creating runtime dir {}: {}", dir.display(), e))?;
+    }
+    Ok(())
+}
+
+pub fn read_to_string(path: PathBuf) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|e| format!("Failed reading {}: {}", path.display(), e))
 }
 
 fn now_iso() -> String {
@@ -34,14 +132,7 @@ fn now_iso() -> String {
 }
 
 pub fn metadata_game_dir(app_id: &str) -> Result<PathBuf, String> {
-    Ok(crate::runtime::base_config_dir()
-        .join("library")
-        .join(app_id)
-        .join("profiles"))
-}
-
-pub fn profile_path(app_id: &str) -> Result<PathBuf, String> {
-    Ok(metadata_game_dir(app_id)?.join(format!("{}.cldr", safe_profile_name("DEFAULT"))))
+    Ok(profiles_dir(app_id))
 }
 
 fn init_profile(name: &str, deployer: &str) -> CalderaProfile {
@@ -59,20 +150,20 @@ fn init_profile(name: &str, deployer: &str) -> CalderaProfile {
 }
 
 pub fn load_or_init_profile(app_id: &str, deployer: &str) -> Result<CalderaProfile, String> {
-    let path = profile_path(app_id)?;
+    let path = default_profile_path(app_id);
     if !path.exists() {
-        return Ok(init_profile("profile", deployer));
+        return Ok(init_profile(DEFAULT_PROFILE, deployer));
     }
     let raw = fs::read_to_string(&path)
         .map_err(|e| format!("Failed reading profile {}: {}", path.display(), e))?;
-    match crate::profile_format::parse_profile(&raw) {
+    match crate::filehandler::parser::parse_profile(&raw) {
         Ok(p) => Ok(p),
-        Err(_) => Ok(init_profile("profile", deployer)),
+        Err(_) => Ok(init_profile(DEFAULT_PROFILE, deployer)),
     }
 }
 
 pub fn save_profile(app_id: &str, profile: &CalderaProfile) -> Result<(), String> {
-    let path = profile_path(app_id)?;
+    let path = default_profile_path(app_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed creating metadata dir {}: {}", parent.display(), e))?;
@@ -181,4 +272,23 @@ pub fn upsert_profile_from_deploy(
     }
 
     save_profile(app_id, &profile)
+}
+
+pub fn list_mod_dirs(app_id: &str) -> Result<Vec<PathBuf>, String> {
+    let dir = mods_dir(app_id);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&dir)
+        .map_err(|e| format!("Failed reading mods dir {}: {}", dir.display(), e))?
+        .flatten()
+    {
+        let path = entry.path();
+        if path.is_dir() {
+            out.push(path);
+        }
+    }
+    out.sort();
+    Ok(out)
 }

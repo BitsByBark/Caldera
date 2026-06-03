@@ -55,7 +55,7 @@ fn settings_schema_path() -> PathBuf {
 }
 
 fn default_settings_schema() -> &'static str {
-    include_str!("../defaults/settings.brk")
+    include_str!("../../defaults/settings.brk")
 }
 
 pub fn get_settings_schema() -> Result<String, String> {
@@ -68,8 +68,11 @@ pub fn get_settings_schema() -> Result<String, String> {
         fs::write(&path, default_settings_schema())
             .map_err(|e| format!("Failed writing settings schema {}: {}", path.display(), e))?;
     }
-    fs::read_to_string(&path)
-        .map_err(|e| format!("Failed reading settings schema {}: {}", path.display(), e))
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed reading settings schema {}: {}", path.display(), e))?;
+    crate::filehandler::parser::parse_settings_schema(&raw)
+        .map_err(|e| format!("Failed parsing settings schema {}: {}", path.display(), e))?;
+    Ok(raw)
 }
 
 pub fn get_settings_values() -> Result<Value, String> {

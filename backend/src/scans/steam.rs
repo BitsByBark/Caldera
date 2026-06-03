@@ -185,25 +185,9 @@ fn manual_app_id(name: &str) -> String {
 }
 
 fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), String> {
-    let library_root = base_config_dir().join("library").join(&game.app_id);
-    let metadata_dir = library_root.join("metadata");
-    let artwork_dir = metadata_dir.join("artwork");
-    let mods_dir = library_root.join("mods");
-    let profiles_dir = library_root.join("profiles");
-    let collections_dir = library_root.join("collections");
+    crate::filehandler::runtime_reader::ensure_game_dirs(&game.app_id)?;
 
-    fs::create_dir_all(&artwork_dir)
-        .map_err(|e| format!("failed creating library artwork dir: {}", e))?;
-    fs::create_dir_all(&mods_dir)
-        .map_err(|e| format!("failed creating library mods dir: {}", e))?;
-    fs::create_dir_all(&profiles_dir)
-        .map_err(|e| format!("failed creating library profiles dir: {}", e))?;
-    fs::create_dir_all(&collections_dir)
-        .map_err(|e| format!("failed creating library collections dir: {}", e))?;
-    fs::create_dir_all(&metadata_dir)
-        .map_err(|e| format!("failed creating metadata dir: {}", e))?;
-
-    let config_toml = metadata_dir.join("config.toml");
+    let config_toml = crate::filehandler::runtime_reader::game_config_path(&game.app_id);
     if !config_toml.exists() {
         fs::write(&config_toml, "").map_err(|e| format!("failed writing config.toml: {}", e))?;
     }
@@ -213,7 +197,7 @@ fn ensure_game_runtime_dirs(game: &SteamGame) -> Result<(), String> {
         "name": game.name,
         "install_path": game.install_path
     });
-    let meta_path = metadata_dir.join("meta.json");
+    let meta_path = crate::filehandler::runtime_reader::game_meta_path(&game.app_id);
     fs::write(
         &meta_path,
         serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string()),
@@ -501,11 +485,7 @@ pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, 
 }
 
 pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths {
-    let caldera_artwork = base_config_dir()
-        .join("library")
-        .join(&app_id)
-        .join("metadata")
-        .join("artwork");
+    let caldera_artwork = crate::filehandler::runtime_reader::artwork_dir(&app_id);
     let cached_banner = caldera_artwork.join("banner.jpg");
     let cached_hero = caldera_artwork.join("hero.jpg");
     let cached_logo = caldera_artwork.join("logo.png");
@@ -559,7 +539,7 @@ pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPa
 }
 
 fn base_config_dir() -> PathBuf {
-    crate::runtime::base_config_dir()
+    crate::filehandler::runtime::base_config_dir()
 }
 
 fn find_librarycache_file(steam_root: &Path, app_id: &str, filename: &str) -> Option<PathBuf> {
@@ -610,11 +590,7 @@ pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(
     });
     ensure_game_runtime_dirs(&game)?;
 
-    let artwork_dir = base_config_dir()
-        .join("library")
-        .join(&app_id)
-        .join("metadata")
-        .join("artwork");
+    let artwork_dir = crate::filehandler::runtime_reader::artwork_dir(&app_id);
 
     if let Some(steam_root) = steam_root {
         if let Some(src) = find_librarycache_file(&steam_root, &app_id, "library_capsule.jpg") {

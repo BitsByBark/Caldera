@@ -4,31 +4,33 @@ use std::{fs, path::Path};
 use crate::GameConfig;
 use serde::{Deserialize, Serialize};
 
-fn base_config_dir() -> PathBuf {
-    crate::runtime::base_config_dir()
-}
-
-fn game_config_path(game_id: &str) -> PathBuf {
-    base_config_dir()
-        .join("games")
-        .join(format!("{}.toml", game_id))
-}
-
-pub fn get_game_config_stub(game_id: String) -> GameConfig {
-    let _path = game_config_path(&game_id);
+pub fn get_game_config(game_id: String) -> GameConfig {
+    let path = crate::filehandler::runtime_reader::game_config_path(&game_id);
+    if path.exists() {
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Ok(config) = toml::from_str::<GameConfig>(&raw) {
+                return config;
+            }
+        }
+    }
     GameConfig {
         game_id: game_id.clone(),
-        name: format!("Game {}", game_id),
-        mod_directory: "~/CALDERA/mods".to_string(),
+        name: game_id.clone(),
+        mod_directory: String::new(),
         deployer: None,
-        active_profile: None,
-        profiles: Vec::new(),
+        active_profile: Some(crate::filehandler::runtime_reader::DEFAULT_PROFILE.to_string()),
+        profiles: vec![crate::filehandler::runtime_reader::DEFAULT_PROFILE.to_string()],
     }
 }
 
-pub fn save_game_config_stub(game_id: String, config: GameConfig) {
-    let _path = game_config_path(&game_id);
-    let _serialized = toml::to_string(&config).unwrap_or_default();
+pub fn save_game_config(game_id: String, config: GameConfig) {
+    let path = crate::filehandler::runtime_reader::game_config_path(&game_id);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(body) = toml::to_string(&config) {
+        let _ = fs::write(&path, body);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,14 +86,9 @@ struct ManifestFileView {
     target: String,
 }
 
-fn collect_queued_nexus_listings(game_name: &str, out: &mut Vec<ModListing>) -> Result<(), String> {
-    let _ = (game_name, out);
-    Ok(())
-}
-
 fn listing_roots(game_name: &str, app_id: &str) -> Vec<PathBuf> {
     let _ = game_name;
-    vec![base_config_dir().join("library").join(app_id).join("mods")]
+    vec![crate::filehandler::runtime_reader::mods_dir(app_id)]
 }
 
 fn parse_listing_file(raw: &str, path: &Path) -> Option<ModListing> {
@@ -257,7 +254,6 @@ pub fn get_raw_modlist_listings(app_id: String) -> Result<Vec<ModListing>, Strin
     for root in listing_roots(&meta.name, &app_id) {
         maybe_collect_from_dir(&root, &mut out)?;
     }
-    collect_queued_nexus_listings(&meta.name, &mut out)?;
     out.sort_by(|a, b| b.added_at.cmp(&a.added_at));
     Ok(out)
 }
@@ -267,12 +263,7 @@ pub fn get_modlist_listings(app_id: String) -> Result<Vec<ModListing>, String> {
 }
 
 fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool), String> {
-    let manifest_path = base_config_dir()
-        .join("library")
-        .join(app_id)
-        .join("mods")
-        .join(mod_id)
-        .join("manifest.json");
+    let manifest_path = crate::filehandler::runtime_reader::mod_manifest_path(app_id, mod_id);
 
     if !manifest_path.exists() {
         return Ok(("UNKNOWN".to_string(), false));
@@ -312,14 +303,14 @@ fn manifest_status_for_mod(app_id: &str, mod_id: &str) -> Result<(String, bool),
 }
 
 pub fn get_profile_modlist(app_id: String) -> Result<Vec<ProfileModRow>, String> {
-    let profile_path = crate::profile_runtime::profile_path(&app_id)?;
+    let profile_path = crate::filehandler::runtime_reader::default_profile_path(&app_id);
     if !profile_path.exists() {
         return Ok(Vec::new());
     }
 
     let raw = fs::read_to_string(&profile_path)
         .map_err(|e| format!("Failed reading profile {}: {}", profile_path.display(), e))?;
-    let profile = crate::profile_format::parse_profile(&raw)
+    let profile = crate::filehandler::parser::parse_profile(&raw)
         .map_err(|e| format!("Failed parsing profile {}: {}", profile_path.display(), e))?;
 
     let mut rows = Vec::with_capacity(profile.modlist.len());
@@ -337,13 +328,13 @@ pub fn get_profile_modlist(app_id: String) -> Result<Vec<ProfileModRow>, String>
 }
 
 pub fn profile_contains_mod(app_id: &str, mod_id: &str) -> Result<bool, String> {
-    let profile_path = crate::profile_runtime::profile_path(app_id)?;
+    let profile_path = crate::filehandler::runtime_reader::default_profile_path(app_id);
     if !profile_path.exists() {
         return Ok(false);
     }
     let raw = fs::read_to_string(&profile_path)
         .map_err(|e| format!("Failed reading profile {}: {}", profile_path.display(), e))?;
-    let profile = crate::profile_format::parse_profile(&raw)
+    let profile = crate::filehandler::parser::parse_profile(&raw)
         .map_err(|e| format!("Failed parsing profile {}: {}", profile_path.display(), e))?;
     Ok(profile.modlist.iter().any(|m| m.id == mod_id))
 }

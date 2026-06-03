@@ -2,14 +2,10 @@ use serde::{Deserialize, Serialize};
 
 pub mod config;
 pub mod deployer;
-pub mod download;
-pub mod nxm;
+pub mod downloadmanagers;
+pub mod filehandler;
 pub mod operations;
-pub mod packer;
-pub mod profile_format;
-pub mod profile_runtime;
-pub mod runtime;
-pub mod steam;
+pub mod scans;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SteamGame {
@@ -36,43 +32,43 @@ pub struct GameConfig {
 }
 
 pub fn get_steam_games(steam_path: Option<String>) -> Result<Vec<SteamGame>, String> {
-    steam::get_steam_games(steam_path)
+    scans::steam::get_steam_games(steam_path)
 }
 
 pub fn add_manual_game(name: String, install_path: String) -> Result<SteamGame, String> {
-    steam::add_manual_game(name, install_path)
+    scans::steam::add_manual_game(name, install_path)
 }
 
 pub fn set_working_directory(path: Option<String>) -> Result<String, String> {
-    runtime::set_working_directory(path)
+    filehandler::runtime::set_working_directory(path)
 }
 
 pub fn get_settings_schema() -> Result<String, String> {
-    runtime::get_settings_schema()
+    filehandler::runtime::get_settings_schema()
 }
 
 pub fn get_settings_values() -> Result<serde_json::Value, String> {
-    runtime::get_settings_values()
+    filehandler::runtime::get_settings_values()
 }
 
 pub fn save_settings_values(values: serde_json::Value) -> Result<(), String> {
-    runtime::save_settings_values(values)
+    filehandler::runtime::save_settings_values(values)
 }
 
 pub fn get_game_artwork(app_id: String, steam_path: Option<String>) -> ArtworkPaths {
-    steam::get_game_artwork(app_id, steam_path)
+    scans::steam::get_game_artwork(app_id, steam_path)
 }
 
 pub fn ensure_game_cache(app_id: String, steam_path: Option<String>) -> Result<(), String> {
-    steam::ensure_game_cache(app_id, steam_path)
+    scans::steam::ensure_game_cache(app_id, steam_path)
 }
 
 pub fn get_game_config(game_id: String) -> GameConfig {
-    config::get_game_config_stub(game_id)
+    config::get_game_config(game_id)
 }
 
 pub fn save_game_config(game_id: String, config: GameConfig) {
-    config::save_game_config_stub(game_id, config)
+    config::save_game_config(game_id, config)
 }
 
 pub fn export_pack(
@@ -84,7 +80,7 @@ pub fn export_pack(
     export_path: String,
     include_disabled: bool,
 ) -> Result<String, String> {
-    packer::export::export_pack(
+    filehandler::packer::export::export_pack(
         app,
         app_id,
         profile_name,
@@ -98,8 +94,8 @@ pub fn export_pack(
 pub fn import_pack(
     app: &tauri::AppHandle,
     pack_path: String,
-) -> Result<packer::ImportResult, String> {
-    packer::import::import_pack(app, pack_path)
+) -> Result<filehandler::packer::ImportResult, String> {
+    filehandler::packer::import::import_pack(app, pack_path)
 }
 
 pub fn get_modlist_listings(

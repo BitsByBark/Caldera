@@ -122,36 +122,24 @@ impl DeployLogger for TauriLogger {
     }
 }
 
-fn base_config_dir() -> PathBuf {
-    crate::runtime::base_config_dir()
-}
-
-fn library_root(app_id: &str) -> PathBuf {
-    base_config_dir().join("library").join(app_id)
-}
-
-fn mod_storage_dir(app_id: &str, mod_id: &str) -> PathBuf {
-    library_root(app_id).join("mods").join(mod_id)
-}
-
 fn mod_files_dir(app_id: &str, mod_id: &str) -> PathBuf {
-    mod_storage_dir(app_id, mod_id).join("files")
+    crate::filehandler::runtime_reader::mod_files_dir(app_id, mod_id)
 }
 
 fn manifest_path(app_id: &str, mod_id: &str) -> PathBuf {
-    mod_storage_dir(app_id, mod_id).join("manifest.json")
+    crate::filehandler::runtime_reader::mod_manifest_path(app_id, mod_id)
 }
 
 fn registry_path() -> PathBuf {
-    base_config_dir().join("registry.cldr")
+    crate::filehandler::runtime_reader::registry_path()
 }
 
 fn game_cache_config_path(app_id: &str) -> PathBuf {
-    library_root(app_id).join("metadata").join("config.toml")
+    crate::filehandler::runtime_reader::game_config_path(app_id)
 }
 
 fn game_meta_path(app_id: &str) -> PathBuf {
-    library_root(app_id).join("metadata").join("meta.json")
+    crate::filehandler::runtime_reader::game_meta_path(app_id)
 }
 
 fn rfc3339_now_utc() -> Option<String> {
@@ -944,7 +932,12 @@ pub fn deploy_listing(
 
     logger.info(&format!("Staged {} file(s) for {}", copied, mod_id));
     let manifest = deploy_mod(app, app_id.clone(), mod_id.clone())?;
-    crate::profile_runtime::upsert_profile_from_deploy(&app_id, &deployer_id, &listing, &manifest)?;
+    crate::filehandler::runtime_reader::upsert_profile_from_deploy(
+        &app_id,
+        &deployer_id,
+        &listing,
+        &manifest,
+    )?;
     logger.success(&format!("Profile updated for {}", mod_id));
     Ok(manifest)
 }

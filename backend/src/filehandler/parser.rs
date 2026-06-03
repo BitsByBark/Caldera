@@ -626,6 +626,284 @@ pub fn serialize_profile(profile: &CalderaProfile) -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsSchema {
+    pub groups: Vec<SettingsGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsGroup {
+    pub id: String,
+    pub label: String,
+    pub entries: Vec<SettingsEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsEntry {
+    pub id: String,
+    pub label: String,
+    pub type_expr: String,
+    pub default: String,
+    pub hot: bool,
+    pub desc: Option<String>,
+}
+
+fn skip_settings_ws(source: &str, idx: usize) -> usize {
+    let mut i = idx;
+    while i < source.len() {
+        let Some(ch) = source[i..].chars().next() else {
+            break;
+        };
+        if !ch.is_whitespace() {
+            break;
+        }
+        i += ch.len_utf8();
+    }
+    i
+}
+
+fn read_settings_ident(source: &str, idx: usize) -> Result<(String, usize), String> {
+    let mut i = skip_settings_ws(source, idx);
+    let start = i;
+    while i < source.len() {
+        let Some(ch) = source[i..].chars().next() else {
+            break;
+        };
+        if !(ch.is_ascii_alphanumeric() || ch == '_') {
+            break;
+        }
+        i += ch.len_utf8();
+    }
+    if i == start {
+        return Err(format!("expected identifier at index {}", i));
+    }
+    Ok((source[start..i].to_string(), i))
+}
+
+fn read_settings_quoted(source: &str, idx: usize) -> Result<(String, usize), String> {
+    let mut i = skip_settings_ws(source, idx);
+    if source[i..].chars().next() != Some('"') {
+        return Err(format!("expected quoted string at index {}", i));
+    }
+    i += 1;
+    let mut out = String::new();
+    let mut escaped = false;
+    while i < source.len() {
+        let Some(ch) = source[i..].chars().next() else {
+            break;
+        };
+        i += ch.len_utf8();
+        if escaped {
+            out.push(match ch {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '"' => '"',
+                '\\' => '\\',
+                x => x,
+            });
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            return Ok((out, i));
+        }
+        out.push(ch);
+    }
+    Err("unterminated quoted string".to_string())
+}
+
+fn extract_settings_block(source: &str, open_brace_idx: usize) -> Result<(&str, usize), String> {
+    let mut depth = 0usize;
+    let mut i = open_brace_idx;
+    let mut in_string = false;
+    let mut escaped = false;
+    while i < source.len() {
+        let Some(ch) = source[i..].chars().next() else {
+            break;
+        };
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += ch.len_utf8();
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        } else if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Ok((&source[open_brace_idx + 1..i], i + ch.len_utf8()));
+            }
+        }
+        i += ch.len_utf8();
+    }
+    Err("unterminated block".to_string())
+}
+
+fn read_settings_field_value(body: &str, idx: usize) -> Result<(String, usize), String> {
+    let mut i = skip_settings_ws(body, idx);
+    if body[i..].chars().next() != Some('=') {
+        return Err(format!("expected '=' at index {}", i));
+    }
+    i += 1;
+    i = skip_settings_ws(body, i);
+    let start = i;
+    let mut in_string = false;
+    let mut escaped = false;
+    while i < body.len() {
+        let Some(ch) = body[i..].chars().next() else {
+            break;
+        };
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += ch.len_utf8();
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        } else if ch == '\n' || ch == '\r' {
+            break;
+        }
+        i += ch.len_utf8();
+    }
+    Ok((body[start..i].trim().to_string(), i))
+}
+
+fn unquote_settings_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn validate_settings_type(type_expr: &str, entry_id: &str) -> Result<(), String> {
+    let t = type_expr.trim();
+    if ["bool", "select", "text", "path", "color", "keybind"].contains(&t) {
+        return Ok(());
+    }
+    if t.starts_with("cycle [") && t.ends_with(']') {
+        return Ok(());
+    }
+    if t.starts_with("range ") && t.contains("..") && t.contains(" step ") {
+        return Ok(());
+    }
+    Err(format!("unknown type expression for {}: {}", entry_id, t))
+}
+
+fn parse_settings_fields(entry_id: String, body: &str) -> Result<SettingsEntry, String> {
+    let mut label = None;
+    let mut type_expr = None;
+    let mut default = None;
+    let mut hot = None;
+    let mut desc = None;
+    let mut idx = 0usize;
+    while idx < body.len() {
+        idx = skip_settings_ws(body, idx);
+        if idx >= body.len() {
+            break;
+        }
+        let (field, next) = read_settings_ident(body, idx)?;
+        let (value, next) = read_settings_field_value(body, next)?;
+        match field.as_str() {
+            "label" => label = Some(unquote_settings_value(&value)),
+            "type" => type_expr = Some(value),
+            "default" => default = Some(unquote_settings_value(&value)),
+            "hot" => {
+                hot = Some(match value.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(format!("{}.hot must be true or false", entry_id)),
+                })
+            }
+            "desc" => desc = Some(unquote_settings_value(&value)),
+            _ => {
+                return Err(format!(
+                    "unknown field {} in settings entry {}",
+                    field, entry_id
+                ))
+            }
+        }
+        idx = next;
+    }
+
+    let type_expr = type_expr.ok_or_else(|| format!("{}.type missing required field", entry_id))?;
+    validate_settings_type(&type_expr, &entry_id)?;
+    Ok(SettingsEntry {
+        id: entry_id.clone(),
+        label: label.ok_or_else(|| format!("{}.label missing required field", entry_id))?,
+        type_expr,
+        default: default.ok_or_else(|| format!("{}.default missing required field", entry_id))?,
+        hot: hot.ok_or_else(|| format!("{}.hot missing required field", entry_id))?,
+        desc,
+    })
+}
+
+fn parse_settings_entries(group_body: &str) -> Result<Vec<SettingsEntry>, String> {
+    let mut entries = Vec::new();
+    let mut idx = 0usize;
+    while idx < group_body.len() {
+        idx = skip_settings_ws(group_body, idx);
+        if idx >= group_body.len() {
+            break;
+        }
+        let (entry_id, next) = read_settings_ident(group_body, idx)?;
+        let cursor = skip_settings_ws(group_body, next);
+        if group_body[cursor..].chars().next() != Some('{') {
+            return Err(format!("expected '{{' after settings entry {}", entry_id));
+        }
+        let (entry_body, next) = extract_settings_block(group_body, cursor)?;
+        entries.push(parse_settings_fields(entry_id, entry_body)?);
+        idx = next;
+    }
+    Ok(entries)
+}
+
+pub fn parse_settings_schema(text: &str) -> Result<SettingsSchema, String> {
+    let source = strip_comments(text);
+    let mut groups = Vec::new();
+    let mut idx = 0usize;
+    while idx < source.len() {
+        idx = skip_settings_ws(&source, idx);
+        if idx >= source.len() {
+            break;
+        }
+        let (group_id, next) = read_settings_ident(&source, idx)?;
+        let (group_label, next) = read_settings_quoted(&source, next)?;
+        let cursor = skip_settings_ws(&source, next);
+        if source[cursor..].chars().next() != Some('{') {
+            return Err(format!("expected '{{' after settings group {}", group_id));
+        }
+        let (group_body, next) = extract_settings_block(&source, cursor)?;
+        groups.push(SettingsGroup {
+            id: group_id,
+            label: group_label,
+            entries: parse_settings_entries(group_body)?,
+        });
+        idx = next;
+    }
+    Ok(SettingsSchema { groups })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

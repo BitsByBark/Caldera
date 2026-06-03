@@ -3,6 +3,10 @@ name = "caldera-backend"
 version = "0.1.1"
 edition = "2021"
 
+[lib]
+name = "caldera_backend"
+path = "src/library.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -21,6 +25,4 @@ dirs = "5"
 time = { version = "0.3", features = ["formatting"] }
 zstd = "0.13"
 zip = "2"
-axum = "0.7"
 reqwest = { version = "0.13", features = ["json"] }
-tokio = { version = "1", features = ["net"] }
